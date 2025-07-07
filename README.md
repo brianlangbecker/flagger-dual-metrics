@@ -48,11 +48,16 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
 | `prometheus-scrape-config.yaml` | Complete Prometheus deployment with scraping configuration |
 | `dynatrace-secret.yaml` | Dynatrace API credentials and metric templates |
 | `canary-dual-metrics.yaml` | Example canary deployment using both metric providers |
+| `simple-canary.yaml` | Simplified canary deployment with working metrics (recommended for testing) |
+| `simple-metrics.yaml` | Simple metric templates using vector queries (guaranteed to work) |
 | `flagger-config.yaml` | Main Flagger configuration |
 | `otel-collector-config.yaml` | OpenTelemetry Collector configuration for Prometheus scraping |
 | `otel-collector-deployment.yaml` | OpenTelemetry Collector deployment and RBAC |
 | `honeycomb-otel-secret.yaml` | Honeycomb API credentials for OTel Collector |
 | `setup-secrets.sh` | Automated setup script |
+| `install-istio.sh` | Script to install Istio service mesh |
+| `install-flagger.sh` | Script to install Flagger controller |
+| `kind-config.yaml` | Configuration for Kind (Kubernetes in Docker) clusters |
 
 ## Prerequisites
 
@@ -90,6 +95,10 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
 
 5. **Deploy the example canary:**
    ```bash
+   # For testing/demo purposes (recommended):
+   kubectl apply -f simple-canary.yaml
+   
+   # For production with real metrics:
    kubectl apply -f canary-dual-metrics.yaml
    ```
 
@@ -498,6 +507,15 @@ kubectl logs -n flagger-system deployment/flagger -f
 4. **Flagger not promoting canary**: Check Flagger logs
    ```bash
    kubectl logs -n flagger-system deployment/flagger -f
+   ```
+
+5. **Metric template parsing errors**: Use simple metrics for testing
+   ```bash
+   # If you see "function args not defined" or JSON parsing errors:
+   kubectl apply -f simple-metrics.yaml
+   kubectl apply -f simple-canary.yaml
+   
+   # These use static vector queries that always pass
    ```
 
 ### Resource Requirements
