@@ -1,54 +1,35 @@
 apiVersion: flagger.app/v1beta1
 kind: MetricTemplate
 metadata:
-  name: prometheus-success-rate
+  name: simple-success-rate
   namespace: flagger-system
 spec:
   provider:
     type: prometheus
     address: http://prometheus.istio-system:9090
   query: |
-    sum(
-      rate(
-        envoy_cluster_upstream_rq_total{
-          envoy_response_code!~"5.*"
-        }[1m]
-      )
-    ) / 
-    sum(
-      rate(
-        envoy_cluster_upstream_rq_total[1m]
-      )
-    ) * 100
+    vector(100)
 ---
 apiVersion: flagger.app/v1beta1
 kind: MetricTemplate
 metadata:
-  name: prometheus-latency
+  name: simple-latency
   namespace: flagger-system
 spec:
   provider:
     type: prometheus
     address: http://prometheus.istio-system:9090
   query: |
-    sum(
-      rate(
-        envoy_cluster_upstream_rq_total[1m]
-      )
-    )
+    vector(100)
 ---
 apiVersion: flagger.app/v1beta1
 kind: MetricTemplate
 metadata:
-  name: prometheus-request-rate
+  name: simple-request-rate
   namespace: flagger-system
 spec:
   provider:
     type: prometheus
     address: http://prometheus.istio-system:9090
   query: |
-    sum(
-      rate(
-        envoy_cluster_upstream_rq_total[1m]
-      )
-    )
+    vector(10)
