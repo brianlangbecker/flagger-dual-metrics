@@ -1,0 +1,79 @@
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: prometheus-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    sum(
+      rate(
+        istio_requests_total{
+          reporter="destination",
+          destination_service_name=~"{{ args.name }}",
+          response_code!~"5.*"
+        }[{{ args.interval }}]
+      )
+    ) / 
+    sum(
+      rate(
+        istio_requests_total{
+          reporter="destination",
+          destination_service_name=~"{{ args.name }}"
+        }[{{ args.interval }}]
+      )
+    ) * 100
+  thresholds:
+    - name: success-rate
+      min: 95
+      max: 100
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: prometheus-latency
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    histogram_quantile(0.95,
+      sum(
+        rate(
+          istio_request_duration_milliseconds_bucket{
+            reporter="destination",
+            destination_service_name=~"{{ args.name }}"
+          }[{{ args.interval }}]
+        )
+      ) by (le)
+    )
+  thresholds:
+    - name: latency
+      min: 0
+      max: 500
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: prometheus-request-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    sum(
+      rate(
+        istio_requests_total{
+          reporter="destination",
+          destination_service_name=~"{{ args.name }}"
+        }[{{ args.interval }}]
+      )
+    )
+  thresholds:
+    - name: request-rate
+      min: 1
+      max: 1000

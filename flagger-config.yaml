@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flagger-config
+  namespace: flagger-system
+data:
+  config.yaml: |
+    apiVersion: flagger.app/v1beta1
+    kind: Config
+    metadata:
+      name: flagger-config
+    spec:
+      metricsServer: "http://prometheus.istio-system:9090"
+      meshProvider: istio
+      metricTemplates:
+        - name: honeycomb-success-rate
+          provider:
+            type: honeycomb
+            address: https://api.honeycomb.io
+            secretRef:
+              name: honeycomb-secret
+              key: api-key
+          query: |
+            COUNT(spans) WHERE status_code < 400 / COUNT(spans) * 100
+        - name: datadog-success-rate
+          provider:
+            type: datadog
+            address: https://api.datadoghq.com
+            secretRef:
+              name: datadog-secret
+              key: api-key
+          query: |
+            avg:trace.http.request.hits{service:{{.Name}},env:{{.Namespace}}} by {service}.as_count()
+        - name: honeycomb-latency
+          provider:
+            type: honeycomb
+            address: https://api.honeycomb.io
+            secretRef:
+              name: honeycomb-secret
+              key: api-key
+          query: |
+            P95(duration_ms) WHERE service_name = "{{.Name}}"
+        - name: datadog-latency
+          provider:
+            type: datadog
+            address: https://api.datadoghq.com
+            secretRef:
+              name: datadog-secret
+              key: api-key
+          query: |
+            avg:trace.http.request.duration{service:{{.Name}},env:{{.Namespace}}} by {service}

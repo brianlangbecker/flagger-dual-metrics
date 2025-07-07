@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: flagger-system
+data:
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            # Scrape Prometheus itself
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['prometheus.istio-system:9090']
+              scrape_interval: 30s
+              metrics_path: /metrics
+            
+            # Scrape Istio control plane
+            - job_name: 'istiod'
+              kubernetes_sd_configs:
+                - role: endpoints
+                  namespaces:
+                    names:
+                      - istio-system
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+                  action: keep
+                  regex: istiod;http-monitoring
+              scrape_interval: 30s
+            
+            # Scrape Envoy sidecars from all namespaces
+            - job_name: 'envoy-stats'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_container_name]
+                  action: keep
+                  regex: istio-proxy
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:15090
+                  target_label: __address__
+                - action: labelmap
+                  regex: __meta_kubernetes_pod_label_(.+)
+                - source_labels: [__meta_kubernetes_namespace]
+                  action: replace
+                  target_label: kubernetes_namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: kubernetes_pod_name
+              scrape_interval: 30s
+              metrics_path: /stats/prometheus
+            
+            # Scrape application metrics
+            - job_name: 'kubernetes-pods'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: true
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:$2
+                  target_label: __address__
+                - action: labelmap
+                  regex: __meta_kubernetes_pod_label_(.+)
+                - source_labels: [__meta_kubernetes_namespace]
+                  action: replace
+                  target_label: kubernetes_namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: kubernetes_pod_name
+              scrape_interval: 30s
+
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+      
+      # Filter to only send relevant metrics to Honeycomb
+      filter/honeycomb:
+        metrics:
+          include:
+            match_type: regexp
+            metric_names:
+              - "envoy_cluster_upstream_rq_.*"
+              - "envoy_http_.*_rq_.*"
+              - "istio_requests_.*"
+              - "istio_request_duration_.*"
+              - "prometheus_.*"
+              - "up"
+      
+      # Add resource attributes
+      resource:
+        attributes:
+          - key: service.name
+            value: "flagger-metrics"
+            action: upsert
+          - key: service.version
+            value: "1.0.0"
+            action: upsert
+          - key: deployment.environment
+            value: "local"
+            action: upsert
+
+    exporters:
+      otlp/honeycomb:
+        endpoint: "https://api.honeycomb.io:443"
+        headers:
+          "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
+          "x-honeycomb-dataset": "flagger-metrics"
+        compression: gzip
+      
+      # Debug exporter for troubleshooting
+      debug:
+        verbosity: basic
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      pprof:
+        endpoint: 0.0.0.0:1777
+      zpages:
+        endpoint: 0.0.0.0:55679
+
+    service:
+      extensions: [health_check, pprof, zpages]
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [batch, filter/honeycomb, resource]
+          exporters: [otlp/honeycomb, debug]
