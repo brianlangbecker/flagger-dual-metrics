@@ -6,7 +6,7 @@ This project provides a complete setup for running Flagger with **multiple obser
 
 ✅ **Prometheus Only** (Default - ready to use)
 ✅ **Prometheus + Dynatrace** (Dual validation - Dynatrace commented out by default)  
-✅ **Prometheus + Honeycomb** (via OpenTelemetry Collector)
+✅ **Prometheus + OpenTelemetry** (metrics forwarding to external systems)
 ✅ **All Three Providers** (Triple validation when all are configured)
 
 ## Overview
@@ -15,7 +15,7 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
 
 - **Prometheus**: Scrape metrics directly from your applications and Istio service mesh
 - **Dynatrace**: Query advanced observability metrics from Dynatrace's APM platform (configured but commented out)
-- **Honeycomb**: Receive metrics via OpenTelemetry Collector for centralized observability
+- **OpenTelemetry Collector**: Forward metrics to external observability platforms like Honeycomb
 - **Multi-Provider Validation**: Use multiple metric sources simultaneously to ensure canary deployments are safe and reliable
 
 **Key Benefit**: If one metrics provider has issues, Flagger can still make decisions using the other providers, increasing deployment reliability.
@@ -33,11 +33,11 @@ Flagger doesn't directly connect to multiple observability platforms. Instead, i
 **Example**: A canary might use:
 - Prometheus MetricTemplate for success rate (from scraped metrics)
 - Dynatrace MetricTemplate for latency (from APM data)
-- Honeycomb MetricTemplate for request rate (from span/trace data via Query API)
+- Additional Prometheus MetricTemplate for request rate
 
-All three must pass for the canary to be promoted.
+All referenced metrics must pass for the canary to be promoted.
 
-**Note**: The OTel Collector forwards Prometheus metrics to Honeycomb for storage, while Flagger queries Honeycomb's span/trace data directly via their Query API. These are different data sources within Honeycomb.
+**Note**: The OTel Collector can forward Prometheus metrics to external platforms like Honeycomb for storage and analysis, but Flagger itself only queries the supported provider types directly.
 
 ## Architecture
 
@@ -54,19 +54,19 @@ All three must pass for the canary to be promoted.
          │    ┌─────────────────┐    ┌─────────────────┐   │
          │    │  OTel Collector │───►│    Honeycomb    │   │
          │    │                 │    │                 │   │
-         │    │  (Scrapes &     │    │   (Metrics      │   │
+         │    │  (Scrapes &     │    │   (External     │   │
          │    │   Forwards)     │    │    Storage)     │   │
          │    └─────────────────┘    └─────────────────┘   │
-         │                                     │           │
-         │                                     │           │
-         └─────────────────────────────────────┼───────────┘
-                                               │           
+         │                                                 │
+         │                                                 │
+         └─────────────────────────┬───────────────────────┘
+                                   │           
                ┌─────────────────────────────────┐          
                │             Flagger             │          
                │                                 │          
                │  MetricTemplate1 → Prometheus   │          
                │  MetricTemplate2 → Dynatrace    │          
-               │  MetricTemplate3 → Honeycomb    │          
+               │  MetricTemplate3 → Prometheus   │          
                │                                 │          
                │  → Evaluates ALL metrics        │          
                │  → Promotes if ALL pass         │          
@@ -99,22 +99,11 @@ The observability providers are configured in the following locations:
       key: api-token
   ```
 
-### Honeycomb Provider
-- **File**: `flagger-config.yaml` (lines 16-22, 34-40)  
-- **File**: `otel-collector-config.yaml` (lines 114-120)
-- **Configuration**:
-  ```yaml
-  provider:
-    type: honeycomb
-    address: https://api.honeycomb.io
-    secretRef:
-      name: honeycomb-secret
-      key: api-key
-  ```
-
-### OpenTelemetry Collector
+### OpenTelemetry Collector (External Forwarding)
+- **File**: `otel-collector-config.yaml` (lines 114-120) - Honeycomb exporter config
 - **File**: `otel-collector-deployment.yaml` - Kubernetes deployment
-- **File**: `otel-collector-config.yaml` - Collector configuration with Honeycomb exporter
+- **Purpose**: Forwards Prometheus metrics to external platforms like Honeycomb
+- **Note**: This is for external storage/analysis, not direct Flagger querying
 
 ## Files Overview
 
