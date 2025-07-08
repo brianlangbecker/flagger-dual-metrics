@@ -46,10 +46,19 @@ All three must pass for the canary to be promoted.
 │   (Canary)      │◄──►│   (Scraping)    │    │   (APM Agent)   │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                        │                        │
-         │                        │                        │
-         └────────────────────────┼────────────────────────┘
-                                  │                        
-                                  │                        
+         │               ┌────────┘                        │
+         │               │                                 │
+         │               ▼                                 │
+         │    ┌─────────────────┐    ┌─────────────────┐   │
+         │    │  OTel Collector │───►│    Honeycomb    │   │
+         │    │                 │    │                 │   │
+         │    │  (Scrapes &     │    │   (Metrics      │   │
+         │    │   Forwards)     │    │    Storage)     │   │
+         │    └─────────────────┘    └─────────────────┘   │
+         │                                     │           │
+         │                                     │           │
+         └─────────────────────────────────────┼───────────┘
+                                               │           
                ┌─────────────────────────────────┐          
                │             Flagger             │          
                │                                 │          
@@ -60,16 +69,6 @@ All three must pass for the canary to be promoted.
                │  → Evaluates ALL metrics        │          
                │  → Promotes if ALL pass         │          
                └─────────────────────────────────┘          
-                                  │                        
-                                  │                        
-┌─────────────────┐               │    ┌─────────────────┐  
-│  OTel Collector │◄──────────────┼───►│    Honeycomb    │  
-│                 │               │    │                 │  
-│  (Scrapes       │               │    │   (Metrics      │  
-│   Prometheus)   │               │    │    Storage)     │  
-└─────────────────┘               │    └─────────────────┘  
-         │                        │                        
-         └────────────────────────┘                        
 ```
 
 ## Provider Definitions
