@@ -31,14 +31,66 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
          │                        │                        │
          │                        │                        │
          └────────────────────────┼────────────────────────┘
+                                  │                        │
+┌─────────────────┐    ┌─────────────────┐                  │
+│  OTel Collector │    │    Honeycomb    │                  │
+│                 │◄──►│                 │                  │
+│  (Scraping &    │    │   (Metrics      │                  │
+│   Forwarding)   │    │    Storage)     │                  │
+└─────────────────┘    └─────────────────┘                  │
+         │                                                  │
+         └──────────────────────────────────────────────────┘
                                   │
                      ┌─────────────────┐
                      │     Flagger     │
                      │                 │
-                     │  (Canary        │
+                     │  (Multi-Provider│
                      │   Analysis)     │
                      └─────────────────┘
 ```
+
+## Provider Definitions
+
+The observability providers are configured in the following locations:
+
+### Prometheus Provider
+- **File**: `prometheus-config.yaml` (lines 7-9, 30-32, 46-48)
+- **File**: `simple-metrics.yaml` (lines 7-9, 19-21, 31-33)
+- **Configuration**:
+  ```yaml
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  ```
+
+### Dynatrace Provider  
+- **File**: `dynatrace-secret.yaml` (lines 16-21, 35-40)
+- **Configuration**:
+  ```yaml
+  provider:
+    type: dynatrace
+    address: https://{{ args.environment }}.live.dynatrace.com
+    secretRef:
+      name: dynatrace-secret
+      key: api-token
+  ```
+
+### Honeycomb Provider
+- **File**: `flagger-config.yaml` (lines 16-22, 34-40)  
+- **File**: `otel-collector-config.yaml` (lines 114-120)
+- **Configuration**:
+  ```yaml
+  provider:
+    type: honeycomb
+    address: https://api.honeycomb.io
+    secretRef:
+      name: honeycomb-secret
+      key: api-key
+  ```
+
+### OpenTelemetry Collector
+- **File**: `otel-collector-deployment.yaml` - Kubernetes deployment
+- **File**: `otel-collector-config.yaml` - Collector configuration with Honeycomb exporter
 
 ## Files Overview
 
