@@ -20,6 +20,23 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
 
 **Key Benefit**: If one metrics provider has issues, Flagger can still make decisions using the other providers, increasing deployment reliability.
 
+## How Multi-Provider Validation Works
+
+Flagger doesn't directly connect to multiple observability platforms. Instead, it works through **MetricTemplate** resources:
+
+1. **MetricTemplates** define queries for specific providers (Prometheus, Dynatrace, Honeycomb)
+2. **Canary resources** reference multiple MetricTemplates from different providers
+3. **Flagger evaluates ALL metrics** from all referenced templates during each analysis interval
+4. **Promotion only happens** when ALL metrics from ALL providers pass their thresholds
+5. **If ANY metric fails** (from any provider), the canary is held or rolled back
+
+**Example**: A canary might use:
+- Prometheus MetricTemplate for success rate
+- Dynatrace MetricTemplate for latency  
+- Honeycomb MetricTemplate for request rate
+
+All three must pass for the canary to be promoted.
+
 ## Architecture
 
 ```
@@ -41,12 +58,16 @@ Flagger is a progressive delivery tool that automates canary deployments on Kube
          │                                                  │
          └──────────────────────────────────────────────────┘
                                   │
-                     ┌─────────────────┐
-                     │     Flagger     │
-                     │                 │
-                     │  (Multi-Provider│
-                     │   Analysis)     │
-                     └─────────────────┘
+               ┌─────────────────────────────────┐
+               │             Flagger             │
+               │                                 │
+               │  MetricTemplate1 → Prometheus   │
+               │  MetricTemplate2 → Dynatrace    │  
+               │  MetricTemplate3 → Honeycomb    │
+               │                                 │
+               │  → Evaluates ALL metrics        │
+               │  → Promotes if ALL pass         │
+               └─────────────────────────────────┘
 ```
 
 ## Provider Definitions
