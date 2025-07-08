@@ -48,15 +48,6 @@ All three must pass for the canary to be promoted.
          │                        │                        │
          │                        │                        │
          └────────────────────────┼────────────────────────┘
-                                  │                        │
-┌─────────────────┐    ┌─────────────────┐                  │
-│  OTel Collector │    │    Honeycomb    │                  │
-│                 │◄──►│                 │                  │
-│  (Scraping &    │    │   (Metrics      │                  │
-│   Forwarding)   │    │    Storage)     │                  │
-└─────────────────┘    └─────────────────┘                  │
-         │                                                  │
-         └──────────────────────────────────────────────────┘
                                   │
                ┌─────────────────────────────────┐
                │             Flagger             │
@@ -68,6 +59,14 @@ All three must pass for the canary to be promoted.
                │  → Evaluates ALL metrics        │
                │  → Promotes if ALL pass         │
                └─────────────────────────────────┘
+                                  │
+                                  │
+┌─────────────────┐    ┌─────────────────┐
+│  OTel Collector │    │    Honeycomb    │
+│                 │◄──►│                 │
+│  (Scraping &    │    │   (Metrics      │
+│   Forwarding)   │    │    Storage)     │
+└─────────────────┘    └─────────────────┘
 ```
 
 ## Provider Definitions
