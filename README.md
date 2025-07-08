@@ -48,25 +48,28 @@ All three must pass for the canary to be promoted.
          │                        │                        │
          │                        │                        │
          └────────────────────────┼────────────────────────┘
-                                  │
-               ┌─────────────────────────────────┐
-               │             Flagger             │
-               │                                 │
-               │  MetricTemplate1 → Prometheus   │
-               │  MetricTemplate2 → Dynatrace    │  
-               │  MetricTemplate3 → Honeycomb    │
-               │                                 │
-               │  → Evaluates ALL metrics        │
-               │  → Promotes if ALL pass         │
-               └─────────────────────────────────┘
-                                  │
-                                  │
-┌─────────────────┐    ┌─────────────────┐
-│  OTel Collector │    │    Honeycomb    │
-│                 │◄──►│                 │
-│  (Scraping &    │    │   (Metrics      │
-│   Forwarding)   │    │    Storage)     │
-└─────────────────┘    └─────────────────┘
+                                  │                        
+                                  │                        
+               ┌─────────────────────────────────┐          
+               │             Flagger             │          
+               │                                 │          
+               │  MetricTemplate1 → Prometheus   │          
+               │  MetricTemplate2 → Dynatrace    │          
+               │  MetricTemplate3 → Honeycomb    │          
+               │                                 │          
+               │  → Evaluates ALL metrics        │          
+               │  → Promotes if ALL pass         │          
+               └─────────────────────────────────┘          
+                                  │                        
+                                  │                        
+┌─────────────────┐               │    ┌─────────────────┐  
+│  OTel Collector │◄──────────────┼───►│    Honeycomb    │  
+│                 │               │    │                 │  
+│  (Scrapes       │               │    │   (Metrics      │  
+│   Prometheus)   │               │    │    Storage)     │  
+└─────────────────┘               │    └─────────────────┘  
+         │                        │                        
+         └────────────────────────┘                        
 ```
 
 ## Provider Definitions
