@@ -31,11 +31,13 @@ Flagger doesn't directly connect to multiple observability platforms. Instead, i
 5. **If ANY metric fails** (from any provider), the canary is held or rolled back
 
 **Example**: A canary might use:
-- Prometheus MetricTemplate for success rate
-- Dynatrace MetricTemplate for latency  
-- Honeycomb MetricTemplate for request rate
+- Prometheus MetricTemplate for success rate (from scraped metrics)
+- Dynatrace MetricTemplate for latency (from APM data)
+- Honeycomb MetricTemplate for request rate (from span/trace data via Query API)
 
 All three must pass for the canary to be promoted.
+
+**Note**: The OTel Collector forwards Prometheus metrics to Honeycomb for storage, while Flagger queries Honeycomb's span/trace data directly via their Query API. These are different data sources within Honeycomb.
 
 ## Architecture
 
