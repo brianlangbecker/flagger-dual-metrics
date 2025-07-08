@@ -43,34 +43,40 @@ All referenced metrics must pass for the canary to be promoted.
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Application   │    │   Prometheus    │    │   Dynatrace     │
+│   Application   │───►│   Prometheus    │    │   Dynatrace     │
 │                 │    │                 │    │                 │
-│   (Canary)      │◄──►│   (Scraping)    │    │   (APM Agent)   │
+│   (Canary)      │────┼─────────────────┼───►│   (APM Agent)   │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                        │                        │
-         │               ┌────────┘                        │
-         │               │                                 │
-         │               ▼                                 │
-         │    ┌─────────────────┐    ┌─────────────────┐   │
-         │    │  OTel Collector │───►│    Honeycomb    │   │
-         │    │                 │    │                 │   │
-         │    │  (Scrapes &     │    │   (External     │   │
-         │    │   Forwards)     │    │    Storage)     │   │
-         │    └─────────────────┘    └─────────────────┘   │
-         │                                                 │
-         │                                                 │
-         └─────────────────────────┬───────────────────────┘
-                                   │           
-               ┌─────────────────────────────────┐          
-               │             Flagger             │          
-               │                                 │          
-               │  MetricTemplate1 → Prometheus   │          
-               │  MetricTemplate2 → Dynatrace    │          
-               │  MetricTemplate3 → Prometheus   │          
-               │                                 │          
-               │  → Evaluates ALL metrics        │          
-               │  → Promotes if ALL pass         │          
-               └─────────────────────────────────┘          
+                                │                        │
+                                │                        │
+                                ▼                        │
+                     ┌─────────────────┐                 │
+                     │  OTel Collector │                 │
+                     │                 │                 │
+                     │  (Scrapes &     │                 │
+                     │   Forwards)     │                 │
+                     └─────────────────┘                 │
+                                │                        │
+                                ▼                        │
+                     ┌─────────────────┐                 │
+                     │    Honeycomb    │                 │
+                     │                 │                 │
+                     │   (External     │                 │
+                     │    Storage)     │                 │
+                     └─────────────────┘                 │
+                                                         │
+                                ┌────────────────────────┼──────────────────────────┐
+                                │                        │                          │
+                                ▼                        ▼                          │
+               ┌─────────────────────────────────┐                                  │
+               │             Flagger             │                                  │
+               │                                 │                                  │
+               │  MetricTemplate1 → Prometheus   │◄─────────────────────────────────┘
+               │  MetricTemplate2 → Dynatrace    │◄─────────────────────────────────┘
+               │                                 │
+               │  → Evaluates ALL metrics        │
+               │  → Promotes if ALL pass         │
+               └─────────────────────────────────┘
 ```
 
 ## Provider Definitions
