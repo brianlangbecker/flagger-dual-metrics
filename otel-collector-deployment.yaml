@@ -75,6 +75,14 @@ spec:
               name: pprof
             - containerPort: 55679 # zpages
               name: zpages
+            - containerPort: 4317  # OTLP gRPC
+              name: otlp-grpc
+            - containerPort: 4318  # OTLP HTTP
+              name: otlp-http
+            - containerPort: 14250 # Jaeger gRPC
+              name: jaeger-grpc
+            - containerPort: 14268 # Jaeger HTTP
+              name: jaeger-http
           volumeMounts:
             - name: otel-collector-config
               mountPath: /etc/otel-collector-config
@@ -123,3 +131,15 @@ spec:
     - name: zpages
       port: 55679
       targetPort: 55679
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: jaeger-grpc
+      port: 14250
+      targetPort: 14250
+    - name: jaeger-http
+      port: 14268
+      targetPort: 14268

@@ -6,15 +6,43 @@ metadata:
 data:
   config.yaml: |
     receivers:
+      # OTLP receiver for traces from applications
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      
+      # Jaeger receiver for traces
+      jaeger:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:14250
+          thrift_http:
+            endpoint: 0.0.0.0:14268
+      
       prometheus:
         config:
           scrape_configs:
-            # Scrape Prometheus itself
+            # Scrape Prometheus itself for Istio metrics
             - job_name: 'prometheus'
               static_configs:
                 - targets: ['prometheus.istio-system:9090']
               scrape_interval: 30s
               metrics_path: /metrics
+            
+            # Scrape Prometheus federation endpoint for Istio metrics
+            - job_name: 'prometheus-federation'
+              static_configs:
+                - targets: ['prometheus.istio-system:9090']
+              scrape_interval: 30s
+              metrics_path: /federate
+              params:
+                match[]:
+                  - 'istio_request_duration_milliseconds_sum'
+                  - 'istio_request_duration_milliseconds_count'
+                  - 'istio_requests_total'
             
             # Scrape Istio control plane
             - job_name: 'istiod'
@@ -98,14 +126,37 @@ data:
               - "prometheus_.*"
               - "up"
       
-      # Simple transform processor to test OTTL
+      # Transform processor to extract service name and HTTP status code
       transform:
         error_mode: ignore
         metric_statements:
           - context: datapoint
             statements:
-              # Test: extract service name from destination_service_name label
+              # Extract service name from destination_service_name label
               - set(resource.attributes["service.name"], attributes["destination_service_name"]) where attributes["destination_service_name"] != nil
+              # Extract HTTP status code from response_code label and map to http.status_code
+              - set(attributes["http.status_code"], attributes["response_code"]) where attributes["response_code"] != nil
+              # Set error flag based on HTTP status code for easier querying
+              - set(attributes["error"], "true") where attributes["response_code"] == "400"
+              - set(attributes["error"], "true") where attributes["response_code"] == "401"
+              - set(attributes["error"], "true") where attributes["response_code"] == "403"
+              - set(attributes["error"], "true") where attributes["response_code"] == "404"
+              - set(attributes["error"], "true") where attributes["response_code"] == "500"
+              - set(attributes["error"], "true") where attributes["response_code"] == "502"
+              - set(attributes["error"], "true") where attributes["response_code"] == "503"
+      
+      # Convert histogram sum/count to average duration
+      metricstransform:
+        transforms:
+          - include: istio_request_duration_milliseconds_sum
+            match_type: strict
+            action: update
+            new_name: duration_ms_total
+          - include: istio_request_duration_milliseconds_count
+            match_type: strict
+            action: update
+            new_name: request_count_total
+
       
       # Simple resource processor that doesn't override service.name
       resource:
@@ -121,11 +172,20 @@ data:
             action: upsert
 
     exporters:
+      # Metrics to Honeycomb
       otlp/honeycomb:
         endpoint: "https://api.honeycomb.io:443"
         headers:
           "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
           "x-honeycomb-dataset": "flagger-metrics"
+        compression: gzip
+      
+      # Traces to Honeycomb (this creates individual events with duration_ms)
+      otlp/honeycomb-traces:
+        endpoint: "https://api.honeycomb.io:443"
+        headers:
+          "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
+          "x-honeycomb-dataset": "flagger-traces"
         compression: gzip
       
       # Debug exporter for troubleshooting
@@ -148,5 +208,9 @@ data:
       pipelines:
         metrics:
           receivers: [prometheus]
-          processors: [batch, filter/honeycomb, transform, resource]
+          processors: [batch, filter/honeycomb, transform, metricstransform, resource]
           exporters: [otlp/honeycomb, debug]
+        traces:
+          receivers: [otlp, jaeger]
+          processors: [batch, resource]
+          exporters: [otlp/honeycomb-traces, debug]

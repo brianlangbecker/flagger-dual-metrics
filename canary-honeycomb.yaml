@@ -84,9 +84,13 @@ spec:
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9898"
+        # Enable Istio tracing
+        sidecar.istio.io/inject: "true"
+        # Manual OpenTelemetry instrumentation approach
       labels:
         app: podinfo
     spec:
+      # Use Istio sidecar for tracing instead of manual instrumentation
       containers:
       - name: podinfod
         image: ghcr.io/stefanprodan/podinfo:6.0.0
@@ -113,6 +117,22 @@ spec:
         env:
         - name: PODINFO_UI_COLOR
           value: "#34577c"
+        # Direct Honeycomb instrumentation (like Dynatrace OneAgent)
+        - name: HONEYCOMB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: honeycomb-otel-secret
+              key: api-key
+        - name: HONEYCOMB_DATASET
+          value: "podinfo-service"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "https://api.honeycomb.io"
+        - name: OTEL_EXPORTER_OTLP_HEADERS
+          value: "x-honeycomb-team=$(HONEYCOMB_API_KEY),x-honeycomb-dataset=$(HONEYCOMB_DATASET)"
+        - name: OTEL_SERVICE_NAME
+          value: "podinfo"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=podinfo,service.version=6.0.0"
         livenessProbe:
           exec:
             command:

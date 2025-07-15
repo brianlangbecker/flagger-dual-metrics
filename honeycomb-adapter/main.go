@@ -40,7 +40,7 @@ type HoneycombQuery struct {
 
 type Calculation struct {
 	Op     string `json:"op"`
-	Column string `json:"column"`
+	Column string `json:"column,omitempty"`
 }
 
 type Filter struct {
@@ -57,7 +57,7 @@ type TimeRange struct {
 func main() {
 	adapter := &HoneycombAdapter{
 		honeycombAPIKey:  getEnv("HONEYCOMB_API_KEY", ""),
-		honeycombDataset: getEnv("HONEYCOMB_DATASET", "flagger-metrics"),
+		honeycombDataset: getEnv("HONEYCOMB_DATASET", "podinfo-service"),
 		honeycombBaseURL: getEnv("HONEYCOMB_BASE_URL", "https://api.honeycomb.io"),
 		logLevel:         getEnv("LOG_LEVEL", "info"),
 	}
@@ -137,7 +137,7 @@ func (h *HoneycombAdapter) handleReady(w http.ResponseWriter, r *http.Request) {
 			StartTime: time.Now().Add(-1 * time.Minute).Unix(),
 			EndTime:   time.Now().Unix(),
 		},
-		Calculations: []Calculation{{Op: "COUNT", Column: "*"}},
+		Calculations: []Calculation{{Op: "COUNT"}},
 	}
 
 	_, err := h.executeHoneycombQuery(testQuery)
@@ -179,7 +179,7 @@ func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*Honeycomb
 	if strings.Contains(promQL, "http_requests_total") && strings.Contains(promQL, "code!~\"5.*\"") {
 		// Calculate success rate: (non-5xx requests / total requests) * 100
 		baseQuery.Calculations = []Calculation{
-			{Op: "COUNT", Column: "*"},
+			{Op: "COUNT"},
 		}
 		baseQuery.Filters = append(baseQuery.Filters, Filter{
 			Column: "http.status_code",
@@ -189,8 +189,9 @@ func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*Honeycomb
 		return baseQuery, nil
 	}
 
-	// Latency query pattern
+	// Latency query pattern - query actual trace spans with duration_ms
 	if strings.Contains(promQL, "histogram_quantile") || strings.Contains(promQL, "duration") {
+		// Query individual trace spans for P95 duration (like Dynatrace)
 		baseQuery.Calculations = []Calculation{
 			{Op: "P95", Column: "duration_ms"},
 		}
@@ -200,7 +201,7 @@ func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*Honeycomb
 	// Request rate query pattern
 	if strings.Contains(promQL, "rate") && strings.Contains(promQL, "http_requests_total") {
 		baseQuery.Calculations = []Calculation{
-			{Op: "COUNT", Column: "*"},
+			{Op: "COUNT"},
 		}
 		return baseQuery, nil
 	}
@@ -208,7 +209,7 @@ func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*Honeycomb
 	// Throughput/count query
 	if strings.Contains(promQL, "http_requests_total") {
 		baseQuery.Calculations = []Calculation{
-			{Op: "COUNT", Column: "*"},
+			{Op: "COUNT"},
 		}
 		return baseQuery, nil
 	}
@@ -344,11 +345,12 @@ func (h *HoneycombAdapter) extractValueFromHoneycombResult(result map[string]int
 			if firstResult, ok := results[0].(map[string]interface{}); ok {
 				if dataPoints, ok := firstResult["data"].([]interface{}); ok && len(dataPoints) > 0 {
 					if point, ok := dataPoints[0].(map[string]interface{}); ok {
-						// Look for numeric values in the data point
+						// Look for calculated values (COUNT, P95, AVG, etc.)
 						for key, v := range point {
 							if strings.Contains(strings.ToLower(key), "count") || 
 							   strings.Contains(strings.ToLower(key), "avg") ||
-							   strings.Contains(strings.ToLower(key), "p95") {
+							   strings.Contains(strings.ToLower(key), "p95") ||
+							   strings.Contains(strings.ToLower(key), "duration_ms") {
 								if val, ok := v.(float64); ok {
 									h.logDebug("Extracted value %f from field %s", val, key)
 									return val
