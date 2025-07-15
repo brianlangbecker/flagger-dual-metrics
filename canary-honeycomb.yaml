@@ -39,17 +39,17 @@ spec:
         thresholdRange:
           min: 1
         interval: 1m
-      # Dynatrace metrics (commented out - uncomment when Dynatrace is available)
-      # - name: dynatrace-success-rate
+      # Honeycomb metrics (via adapter - uncomment when Honeycomb adapter is deployed)
+      # - name: honeycomb-success-rate
       #   templateRef:
-      #     name: dynatrace-success-rate
+      #     name: honeycomb-success-rate
       #     namespace: flagger-system
       #   thresholdRange:
       #     min: 95
       #   interval: 1m
-      # - name: dynatrace-latency
+      # - name: honeycomb-latency
       #   templateRef:
-      #     name: dynatrace-latency
+      #     name: honeycomb-latency
       #     namespace: flagger-system
       #   thresholdRange:
       #     max: 500

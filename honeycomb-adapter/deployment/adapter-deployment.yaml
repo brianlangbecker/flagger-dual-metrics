@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honeycomb-adapter
+  namespace: flagger-system
+  labels:
+    app: honeycomb-adapter
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: honeycomb-adapter
+  template:
+    metadata:
+      labels:
+        app: honeycomb-adapter
+    spec:
+      containers:
+      - name: adapter
+        image: honeycomb-adapter:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 9090
+          name: http
+          protocol: TCP
+        env:
+        - name: HONEYCOMB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: honeycomb-secret
+              key: api-key
+        - name: HONEYCOMB_DATASET
+          value: "flagger-metrics"
+        - name: HONEYCOMB_BASE_URL
+          value: "https://api.honeycomb.io"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: PORT
+          value: "9090"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: honeycomb-adapter
+  namespace: flagger-system
+  labels:
+    app: honeycomb-adapter
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: http
+  selector:
+    app: honeycomb-adapter
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: honeycomb-adapter
+  namespace: flagger-system
+  labels:
+    app: honeycomb-adapter

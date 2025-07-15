@@ -51,9 +51,8 @@ data:
                   action: replace
                   target_label: kubernetes_pod_name
               scrape_interval: 30s
-              metrics_path: /stats/prometheus
             
-            # Scrape application metrics
+            # Scrape application pods (if they expose metrics)
             - job_name: 'kubernetes-pods'
               kubernetes_sd_configs:
                 - role: pod
@@ -81,11 +80,12 @@ data:
               scrape_interval: 30s
 
     processors:
+      # Simple batch processor
       batch:
-        timeout: 1s
+        timeout: 10s
         send_batch_size: 1024
       
-      # Filter to only send relevant metrics to Honeycomb
+      # Filter to only include metrics we care about
       filter/honeycomb:
         metrics:
           include:
@@ -98,17 +98,26 @@ data:
               - "prometheus_.*"
               - "up"
       
-      # Add resource attributes
+      # Simple transform processor to test OTTL
+      transform:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            statements:
+              # Test: extract service name from destination_service_name label
+              - set(resource.attributes["service.name"], attributes["destination_service_name"]) where attributes["destination_service_name"] != nil
+      
+      # Simple resource processor that doesn't override service.name
       resource:
         attributes:
-          - key: service.name
-            value: "flagger-metrics"
-            action: upsert
           - key: service.version
             value: "1.0.0"
             action: upsert
           - key: deployment.environment
             value: "local"
+            action: upsert
+          - key: collector.name
+            value: "flagger-otel-collector"
             action: upsert
 
     exporters:
@@ -121,7 +130,7 @@ data:
       
       # Debug exporter for troubleshooting
       debug:
-        verbosity: basic
+        verbosity: detailed
 
     extensions:
       health_check:
@@ -132,9 +141,12 @@ data:
         endpoint: 0.0.0.0:55679
 
     service:
+      telemetry:
+        logs:
+          level: debug
       extensions: [health_check, pprof, zpages]
       pipelines:
         metrics:
           receivers: [prometheus]
-          processors: [batch, filter/honeycomb, resource]
+          processors: [batch, filter/honeycomb, transform, resource]
           exporters: [otlp/honeycomb, debug]

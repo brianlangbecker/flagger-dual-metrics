@@ -1,0 +1,58 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: honeycomb-instrumentation
+  namespace: test
+spec:
+  exporter:
+    endpoint: https://api.honeycomb.io
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1.0"
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+    env:
+      - name: OTEL_EXPORTER_OTLP_HEADERS
+        value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
+      - name: HONEYCOMB_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: honeycomb-secret
+            key: api-key
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:latest
+    env:
+      - name: OTEL_EXPORTER_OTLP_HEADERS
+        value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
+      - name: HONEYCOMB_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: honeycomb-secret
+            key: api-key
+  dotnet:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-dotnet:latest
+    env:
+      - name: OTEL_EXPORTER_OTLP_HEADERS
+        value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
+      - name: HONEYCOMB_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: honeycomb-secret
+            key: api-key
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
+    env:
+      - name: OTEL_EXPORTER_OTLP_HEADERS
+        value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
+      - name: HONEYCOMB_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: honeycomb-secret
+            key: api-key
+---
+# Note: You'll also need the OpenTelemetry Operator installed
+# Install with:
+# kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/latest/download/opentelemetry-operator.yaml

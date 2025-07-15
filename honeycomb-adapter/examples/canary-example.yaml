@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  namespace: test
+  labels:
+    app: podinfo
+spec:
+  minReadySeconds: 5
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 60
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: podinfo
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9797"
+        # Enable OpenTelemetry auto-instrumentation
+        instrumentation.opentelemetry.io/inject-java: "honeycomb-instrumentation"
+      labels:
+        app: podinfo
+    spec:
+      containers:
+      - name: podinfod
+        image: ghcr.io/stefanprodan/podinfo:6.0.3
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9898
+          protocol: TCP
+        - name: http-metrics
+          containerPort: 9797
+          protocol: TCP
+        - name: grpc
+          containerPort: 9999
+          protocol: TCP
+        command:
+        - ./podinfo
+        - --port=9898
+        - --port-metrics=9797
+        - --grpc-port=9999
+        - --grpc-service-name=podinfo
+        - --level=info
+        - --random-delay=false
+        - --random-error=false
+        env:
+        - name: PODINFO_UI_COLOR
+          value: "#34577c"
+        # OpenTelemetry configuration
+        - name: OTEL_SERVICE_NAME
+          value: "podinfo"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "https://api.honeycomb.io"
+        - name: OTEL_EXPORTER_OTLP_HEADERS
+          value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
+        - name: HONEYCOMB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: honeycomb-secret
+              key: api-key
+        livenessProbe:
+          exec:
+            command:
+            - podcli
+            - check
+            - http
+            - localhost:9898/healthz
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - podcli
+            - check
+            - http
+            - localhost:9898/readyz
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+---
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: podinfo-canary
+  namespace: test
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: podinfo
+  progressDeadlineSeconds: 60
+  service:
+    port: 9898
+    targetPort: 9898
+    portDiscovery: true
+  analysis:
+    interval: 30s
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+    - name: success-rate
+      templateRef:
+        name: honeycomb-success-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 95
+      interval: 30s
+    - name: latency
+      templateRef:
+        name: honeycomb-latency
+        namespace: flagger-system
+      thresholdRange:
+        max: 500
+      interval: 30s
+    - name: request-rate
+      templateRef:
+        name: honeycomb-request-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 1
+      interval: 30s
+    webhooks:
+    - name: load-test-get
+      url: http://flagger-loadtester.test/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 30s -q 10 -c 2 http://podinfo-canary.test:9898/"

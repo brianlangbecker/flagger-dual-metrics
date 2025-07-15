@@ -1,0 +1,130 @@
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: default-metrics
+  namespace: istio-system
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        response_code:
+          operation: UPSERT
+          value: "response_code | ''"
+        request_protocol:
+          operation: UPSERT
+          value: "request_protocol | ''"
+        response_flags:
+          operation: UPSERT
+          value: "response_flags | ''"
+        source_app:
+          operation: UPSERT
+          value: "source_app | ''"
+        destination_app:
+          operation: UPSERT
+          value: "destination_app | ''"
+        destination_version:
+          operation: UPSERT
+          value: "destination_version | ''"
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: request-metrics
+  namespace: istio-system
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        response_code:
+          operation: UPSERT
+          value: "response_code | ''"
+        request_protocol:
+          operation: UPSERT
+          value: "request_protocol | ''"
+        response_flags:
+          operation: UPSERT
+          value: "response_flags | ''"
+        source_app:
+          operation: UPSERT
+          value: "source_app | ''"
+        destination_app:
+          operation: UPSERT
+          value: "destination_app | ''"
+        destination_version:
+          operation: UPSERT
+          value: "destination_version | ''"
+        destination_service_name:
+          operation: UPSERT
+          value: "destination_service_name | ''"
+        destination_service_namespace:
+          operation: UPSERT
+          value: "destination_service_namespace | ''"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-telemetry-config
+  namespace: istio-system
+data:
+  mesh: |
+    # Enable telemetry v2 with detailed HTTP metrics
+    defaultConfig:
+      proxyStatsMatcher:
+        inclusionRegexps:
+        - ".*_cx_.*"
+        - ".*_rq_.*"
+        - ".*_cx_destroy_.*"
+        - ".*_cx_destroy_local_.*"
+        - ".*_cx_destroy_remote_.*"
+        - ".*_cx_connect_timeout_.*"
+        - ".*_cx_none_healthy_.*"
+        - ".*circuit_breakers.*"
+        - ".*upstream_rq_retry.*"
+        - ".*upstream_rq_pending.*"
+        - ".*_cx_overflow.*"
+        - ".*_rq_timeout.*"
+        - ".*_rq_success.*"
+        - ".*_rq_error.*"
+        - ".*http_.*"
+        - ".*_2xx.*"
+        - ".*_3xx.*"
+        - ".*_4xx.*"
+        - ".*_5xx.*"
+        - ".*_request_.*"
+        - ".*_response_.*"
+        exclusionRegexps:
+        - ".*osconfig_googet.*"
+        - ".*osconfig_yum.*"
+        - ".*osconfig_zypper.*"
+        - ".*osconfig_apt.*"
+      proxyMetadata:
+        PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+        PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true
+        BOOTSTRAP_XDS_AGENT: true
+    extensionProviders:
+    - name: prometheus
+      prometheus:
+        configOverride:
+          inbound_metric_name: istio_requests_total
+          outbound_metric_name: istio_requests_total
+          metric_relabeling_configs:
+          - source_labels: [__name__]
+            regex: 'istio_requests_total'
+            target_label: __name__
+            replacement: 'istio_requests_total'
+          - source_labels: [response_code]
+            regex: '([0-9]+)'
+            target_label: response_code
+            replacement: '${1}'
+          - source_labels: [request_protocol]
+            regex: '(.*)'
+            target_label: request_protocol
+            replacement: '${1}'

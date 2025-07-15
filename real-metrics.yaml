@@ -1,0 +1,38 @@
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: real-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    sum(rate(istio_requests_total{destination_service_name=~"{{ args.name }}-primary|{{ args.name }}-canary",response_code!~"5.*"}[5m])) / 
+    sum(rate(istio_requests_total{destination_service_name=~"{{ args.name }}-primary|{{ args.name }}-canary"}[5m])) * 100
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: real-latency
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    histogram_quantile(0.95, 
+      sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name=~"{{ args.name }}-primary|{{ args.name }}-canary"}[5m])) by (le)
+    )
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: real-request-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    sum(rate(istio_requests_total{destination_service_name=~"{{ args.name }}-primary|{{ args.name }}-canary"}[5m]))

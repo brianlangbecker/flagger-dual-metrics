@@ -1,23 +1,14 @@
 #!/bin/bash
 
-# Setup script for Flagger with Prometheus metrics (Dynatrace support available but commented out)
+# Setup script for Flagger with Prometheus and Honeycomb metrics support
 
-echo "Setting up Flagger with Prometheus metrics support..."
+echo "Setting up Flagger with Prometheus and Honeycomb metrics support..."
 
 # Create namespace if it doesn't exist
 kubectl create namespace flagger-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
 
-# Dynatrace configuration (commented out - uncomment when Dynatrace is available)
-# echo "Please provide your Dynatrace API token:"
-# read -s DYNATRACE_API_TOKEN
-# echo "Please provide your Dynatrace environment ID (e.g., abc12345):"
-# read DYNATRACE_ENVIRONMENT
-# kubectl create secret generic dynatrace-secret \
-#   --from-literal=api-token="$DYNATRACE_API_TOKEN" \
-#   --namespace=flagger-system
-
-# Optional: Configure Honeycomb for OpenTelemetry Collector
+# Configure Honeycomb for OpenTelemetry Collector
 echo ""
 echo "Do you want to configure Honeycomb for metrics export? (y/n)"
 read -r CONFIGURE_HONEYCOMB
@@ -43,18 +34,23 @@ else
 fi
 
 # Apply configurations
-# kubectl apply -f dynatrace-secret.yaml  # Uncomment when Dynatrace is available
 kubectl apply -f prometheus-config.yaml
 kubectl apply -f prometheus-scrape-config.yaml
 kubectl apply -f flagger-config.yaml
 
+# Apply Istio telemetry configuration to enable HTTP metrics with status codes
+echo "Applying Istio telemetry configuration for HTTP metrics..."
+kubectl apply -f istio-telemetry-config.yaml
+
 echo ""
 echo "Setup complete! You can now deploy canaries with:"
-echo "kubectl apply -f canary-dual-metrics.yaml"
+echo "kubectl apply -f simple-canary.yaml  # For testing with working metrics"
+echo "kubectl apply -f real-metrics.yaml   # For real Istio metrics"
 echo ""
 echo "To monitor OpenTelemetry Collector (if configured):"
 echo "kubectl logs -n flagger-system deployment/otel-collector -f"
 echo "kubectl port-forward -n flagger-system svc/otel-collector 55679:55679  # zpages"
+echo ""
 echo "Monitor canary deployments with:"
 echo "kubectl get canaries -n test"
 echo "kubectl describe canary podinfo-canary -n test"

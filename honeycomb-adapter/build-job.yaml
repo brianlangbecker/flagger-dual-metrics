@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: honeycomb-adapter-source
+  namespace: flagger-system
+data:
+  main.go: |
+{{ .Files.Get "main.go" | indent 4 }}
+  go.mod: |
+{{ .Files.Get "go.mod" | indent 4 }}
+  go.sum: |
+{{ .Files.Get "go.sum" | indent 4 }}
+  Dockerfile: |
+{{ .Files.Get "Dockerfile" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: honeycomb-adapter-builder
+  namespace: flagger-system
+  labels:
+    app: honeycomb-adapter-builder
+spec:
+  template:
+    metadata:
+      labels:
+        app: honeycomb-adapter-builder
+    spec:
+      restartPolicy: Never
+      serviceAccountName: honeycomb-adapter-builder
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: source-code
+        configMap:
+          name: honeycomb-adapter-source
+      containers:
+      - name: builder
+        image: docker:24-dind
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Starting in-cluster build process..."
+          
+          # Create build directory
+          mkdir -p /build
+          cd /build
+          
+          # Copy source files from ConfigMap
+          cp /source/* .
+          
+          # Build Docker image
+          echo "Building honeycomb-adapter Docker image..."
+          docker build -t honeycomb-adapter:latest .
+          
+          echo "Build completed successfully!"
+          
+          # Optional: Save image to tar for inspection
+          docker save honeycomb-adapter:latest > /tmp/honeycomb-adapter.tar
+          echo "Image saved to /tmp/honeycomb-adapter.tar"
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        - name: source-code
+          mountPath: /source
+        env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+        securityContext:
+          privileged: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: honeycomb-adapter-builder
+  namespace: flagger-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: honeycomb-adapter-builder
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: honeycomb-adapter-builder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: honeycomb-adapter-builder
+subjects:
+- kind: ServiceAccount
+  name: honeycomb-adapter-builder
+  namespace: flagger-system

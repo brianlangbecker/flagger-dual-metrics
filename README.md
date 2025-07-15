@@ -1,81 +1,71 @@
-# Flagger Multi-Provider Metrics Setup
+# Flagger Honeycomb Metrics Setup
 
-This project provides a complete setup for running Flagger with **multiple observability providers simultaneously**. Flagger can validate canary deployments using metrics from different sources concurrently for enhanced reliability.
+This project provides a complete setup for running Flagger with **Honeycomb observability integration**. Flagger validates canary deployments using metrics from Prometheus and forwards telemetry data to Honeycomb for enhanced observability.
 
 ## Supported Configurations
 
 ✅ **Prometheus Only** (Default - ready to use)
-✅ **Prometheus + Dynatrace** (Dual validation - Dynatrace commented out by default)  
-✅ **Prometheus + OpenTelemetry** (metrics forwarding to external systems)
-✅ **All Three Providers** (Triple validation when all are configured)
+✅ **Prometheus + Honeycomb** (Metrics forwarding to Honeycomb via OpenTelemetry)
+✅ **Honeycomb Direct Querying** (Via Honeycomb-Prometheus adapter)
 
 ## Overview
 
 Flagger is a progressive delivery tool that automates canary deployments on Kubernetes. This configuration enables Flagger to:
 
 - **Prometheus**: Scrape metrics directly from your applications and Istio service mesh
-- **Dynatrace**: Query advanced observability metrics from Dynatrace's APM platform (configured but commented out)
-- **OpenTelemetry Collector**: Forward metrics to external observability platforms like Honeycomb
-- **Multi-Provider Validation**: Use multiple metric sources simultaneously to ensure canary deployments are safe and reliable
+- **Honeycomb Integration**: Forward metrics to Honeycomb via OpenTelemetry Collector for enhanced observability
+- **Direct Honeycomb Querying**: Query Honeycomb directly using the Honeycomb-Prometheus adapter
+- **Istio Telemetry**: Collect detailed HTTP metrics with status codes and service identification
 
-**Key Benefit**: If one metrics provider has issues, Flagger can still make decisions using the other providers, increasing deployment reliability.
+**Key Benefit**: Combine Flagger's automated canary validation with Honeycomb's powerful observability platform for comprehensive deployment monitoring.
 
-## How Multi-Provider Validation Works
+## How Honeycomb Integration Works
 
-Flagger doesn't directly connect to multiple observability platforms. Instead, it works through **MetricTemplate** resources:
+Flagger works with Honeycomb through two approaches:
 
-1. **MetricTemplates** define queries for specific providers (Prometheus, Dynatrace, Honeycomb)
-2. **Canary resources** reference multiple MetricTemplates from different providers
-3. **Flagger evaluates ALL metrics** from all referenced templates during each analysis interval
-4. **Promotion only happens** when ALL metrics from ALL providers pass their thresholds
-5. **If ANY metric fails** (from any provider), the canary is held or rolled back
+### Approach 1: Metrics Forwarding (Default)
+1. **Prometheus** scrapes metrics from Istio service mesh and applications
+2. **OpenTelemetry Collector** reads metrics from Prometheus and forwards to Honeycomb
+3. **Flagger** queries Prometheus directly for canary decisions
+4. **Honeycomb** receives enriched metrics for analysis and alerting
 
-**Example**: A canary might use:
-- Prometheus MetricTemplate for success rate (from scraped metrics)
-- Dynatrace MetricTemplate for latency (from APM data)
-- Additional Prometheus MetricTemplate for request rate
+### Approach 2: Direct Querying (Advanced)
+1. **Honeycomb-Prometheus Adapter** translates PromQL queries to Honeycomb API calls
+2. **Flagger** queries the adapter as if it were Prometheus
+3. **Adapter** executes queries against Honeycomb and returns results in Prometheus format
+4. **Canary decisions** are made using live data from Honeycomb
 
-All referenced metrics must pass for the canary to be promoted.
-
-**Note**: The OTel Collector can forward Prometheus metrics to external platforms like Honeycomb for storage and analysis, but Flagger itself only queries the supported provider types directly.
+**Key Benefits**:
+- Honeycomb receives detailed service telemetry with proper service names
+- Flagger can make decisions using either Prometheus or Honeycomb data
+- Enhanced observability during canary deployments
 
 ## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Application   │───►│   Prometheus    │    │   Dynatrace     │
+│   Application   │───►│   Prometheus    │    │    Honeycomb    │
 │                 │    │                 │    │                 │
-│   (Canary)      │────┼─────────────────┼───►│   (APM Agent)   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                        │
-                                │                        │
+│   (Canary)      │────┼─────────────────┼───►│   (Observability│
+└─────────────────┘    └─────────────────┘    │    Platform)    │
+                                │              └─────────────────┘
+                                │                        ▲
                                 ▼                        │
                      ┌─────────────────┐                 │
                      │  OTel Collector │                 │
                      │                 │                 │
-                     │  (Scrapes &     │                 │
-                     │   Forwards)     │                 │
-                     └─────────────────┘                 │
-                                │                        │
-                                ▼                        │
-                     ┌─────────────────┐                 │
-                     │    Honeycomb    │                 │
-                     │                 │                 │
-                     │   (External     │                 │
-                     │    Storage)     │                 │
-                     └─────────────────┘                 │
-                                                         │
-                                ┌────────────────────────┼──────────────────────────┐
-                                │                        │                          │
-                                ▼                        ▼                          │
-               ┌─────────────────────────────────┐                                  │
-               │             Flagger             │                                  │
-               │                                 │                                  │
-               │  MetricTemplate1 → Prometheus   │◄─────────────────────────────────┘
-               │  MetricTemplate2 → Dynatrace    │◄─────────────────────────────────┘
+                     │  (Scrapes &     │─────────────────┘
+                     │   Forwards)     │
+                     └─────────────────┘
+                                │
+                                ▼
+               ┌─────────────────────────────────┐
+               │             Flagger             │
                │                                 │
-               │  → Evaluates ALL metrics        │
-               │  → Promotes if ALL pass         │
+               │  → Queries Prometheus           │
+               │  → Validates canary metrics     │
+               │  → Promotes if metrics pass     │
+               │  → Honeycomb stores telemetry   │
                └─────────────────────────────────┘
 ```
 
@@ -84,8 +74,8 @@ All referenced metrics must pass for the canary to be promoted.
 The observability providers are configured in the following locations:
 
 ### Prometheus Provider
-- **File**: `prometheus-config.yaml` (lines 7-9, 30-32, 46-48)
-- **File**: `simple-metrics.yaml` (lines 7-9, 19-21, 31-33)
+- **File**: `prometheus-config.yaml` - Basic Prometheus metric templates
+- **File**: `real-metrics.yaml` - Real Istio metrics templates
 - **Configuration**:
   ```yaml
   provider:
@@ -93,23 +83,16 @@ The observability providers are configured in the following locations:
     address: http://prometheus.istio-system:9090
   ```
 
-### Dynatrace Provider  
-- **File**: `dynatrace-secret.yaml` (lines 16-21, 35-40)
-- **Configuration**:
-  ```yaml
-  provider:
-    type: dynatrace
-    address: https://{{ args.environment }}.live.dynatrace.com
-    secretRef:
-      name: dynatrace-secret
-      key: api-token
-  ```
-
-### OpenTelemetry Collector (External Forwarding)
-- **File**: `otel-collector-config.yaml` (lines 114-120) - Honeycomb exporter config
+### Honeycomb Integration (OpenTelemetry Collector)
+- **File**: `otel-collector-config.yaml` - Honeycomb exporter config with service name extraction
 - **File**: `otel-collector-deployment.yaml` - Kubernetes deployment
-- **Purpose**: Forwards Prometheus metrics to external platforms like Honeycomb
-- **Note**: This is for external storage/analysis, not direct Flagger querying
+- **Purpose**: Forwards Prometheus metrics to Honeycomb with proper service identification
+- **Key Feature**: Extracts service names from `destination_service_name` labels
+
+### Honeycomb Direct Querying (Advanced)
+- **File**: `honeycomb-adapter/` - Honeycomb-Prometheus adapter
+- **Purpose**: Enables Flagger to query Honeycomb directly via Prometheus-compatible API
+- **Use Case**: Direct canary validation using Honeycomb data
 
 ## Files Overview
 
@@ -117,25 +100,27 @@ The observability providers are configured in the following locations:
 |------|---------|
 | `prometheus-config.yaml` | Prometheus metric templates for Flagger |
 | `prometheus-scrape-config.yaml` | Complete Prometheus deployment with scraping configuration |
-| `dynatrace-secret.yaml` | Dynatrace API credentials and metric templates |
-| `canary-dual-metrics.yaml` | Example canary deployment using both metric providers |
+| `real-metrics.yaml` | Real Istio metrics templates using actual telemetry |
+| `canary-honeycomb.yaml` | Example canary deployment with Honeycomb integration |
 | `simple-canary.yaml` | Simplified canary deployment with working metrics (recommended for testing) |
 | `simple-metrics.yaml` | Simple metric templates using vector queries (guaranteed to work) |
 | `flagger-config.yaml` | Main Flagger configuration |
-| `otel-collector-config.yaml` | OpenTelemetry Collector configuration for Prometheus scraping |
+| `otel-collector-config.yaml` | OpenTelemetry Collector configuration with Honeycomb integration |
 | `otel-collector-deployment.yaml` | OpenTelemetry Collector deployment and RBAC |
 | `honeycomb-otel-secret.yaml` | Honeycomb API credentials for OTel Collector |
+| `istio-telemetry-config.yaml` | Istio telemetry configuration for HTTP metrics with status codes |
 | `setup-secrets.sh` | Automated setup script |
 | `install-istio.sh` | Script to install Istio service mesh |
 | `install-flagger.sh` | Script to install Flagger controller |
 | `kind-config.yaml` | Configuration for Kind (Kubernetes in Docker) clusters |
+| `honeycomb-adapter/` | Honeycomb-Prometheus adapter for direct querying |
 
 ## Prerequisites
 
 - Docker Desktop with Kubernetes enabled (allocate at least 4GB RAM and 2 CPUs)
 - `kubectl` configured to access your cluster
 - Internet access for downloading components
-- (Optional) Dynatrace APM with API access for dual metrics support
+- (Optional) Honeycomb account with API access for metrics forwarding
 
 **Note**: This setup will automatically install Istio and Flagger for you.
 
@@ -162,15 +147,16 @@ The observability providers are configured in the following locations:
    ./setup-secrets.sh
    ```
    
-   This will set up Prometheus metrics and optionally configure Honeycomb via OpenTelemetry Collector. For Dynatrace integration, see the optional section below.
+   This will set up Prometheus metrics and optionally configure Honeycomb via OpenTelemetry Collector.
 
 5. **Deploy the example canary:**
    ```bash
    # For testing/demo purposes (recommended):
    kubectl apply -f simple-canary.yaml
    
-   # For production with real metrics:
-   kubectl apply -f canary-dual-metrics.yaml
+   # For production with real Istio metrics:
+   kubectl apply -f real-metrics.yaml
+   kubectl apply -f canary-honeycomb.yaml
    ```
 
 6. **Monitor the canary deployment:**
@@ -178,47 +164,6 @@ The observability providers are configured in the following locations:
    kubectl get canaries -n test
    kubectl describe canary podinfo-canary -n test
    ```
-
-## Optional: Enable Dynatrace Metrics
-
-If you have a Dynatrace environment available, you can enable dual metrics support:
-
-### 1. Uncomment Dynatrace Configuration
-
-**In `setup-secrets.sh`:**
-```bash
-# Uncomment lines 12-18 and 21:
-echo "Please provide your Dynatrace API token:"
-read -s DYNATRACE_API_TOKEN
-echo "Please provide your Dynatrace environment ID (e.g., abc12345):"
-read DYNATRACE_ENVIRONMENT
-kubectl create secret generic dynatrace-secret \
-  --from-literal=api-token="$DYNATRACE_API_TOKEN" \
-  --namespace=flagger-system
-
-# And uncomment line 21:
-kubectl apply -f dynatrace-secret.yaml
-```
-
-**In `canary-dual-metrics.yaml`:**
-```bash
-# Uncomment lines 43-56 (the Dynatrace metrics section)
-```
-
-### 2. Run Setup with Dynatrace
-
-After uncommenting, run the setup script and it will prompt for your Dynatrace credentials:
-```bash
-./setup-secrets.sh
-```
-
-You'll need to provide:
-- Dynatrace API token
-- Dynatrace environment ID (e.g., abc12345)
-
-### 3. Deploy with Dual Metrics
-
-The canary deployment will then use both Prometheus and Dynatrace metrics for validation.
 
 ## Optional: Enable Honeycomb Metrics Export
 
@@ -259,6 +204,54 @@ kubectl port-forward -n flagger-system svc/otel-collector 55679:55679
 kubectl port-forward -n flagger-system svc/otel-collector 13133:13133
 # Open http://localhost:13133
 ```
+
+## Optional: Enable Direct Honeycomb Querying (Advanced)
+
+For advanced users who want Flagger to query Honeycomb directly (instead of just forwarding metrics), you can deploy the Honeycomb-Prometheus adapter:
+
+### What it does:
+- Provides a Prometheus-compatible API that Flagger can query
+- Translates PromQL queries to Honeycomb Query API calls
+- Enables Honeycomb as a direct metrics provider for canary analysis
+
+### Prerequisites:
+- Your applications must send telemetry to Honeycomb with these attributes:
+  - `service.name` - Service identification
+  - `http.status_code` - HTTP status codes
+  - `duration_ms` - Request duration
+  - `error` - Error tracking (boolean)
+
+### Setup:
+```bash
+# Navigate to the adapter directory
+cd honeycomb-adapter
+
+# Create Honeycomb API secret for the adapter
+kubectl create secret generic honeycomb-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_API_KEY \
+  --namespace=flagger-system
+
+# Build and deploy the adapter (builds Go code in-cluster)
+make build-and-deploy
+
+# Apply Honeycomb-backed metric templates
+kubectl apply -f examples/metric-templates.yaml
+
+# Use the Honeycomb canary example
+kubectl apply -f examples/canary-example.yaml
+```
+
+### Verification:
+```bash
+# Check adapter health
+kubectl port-forward -n flagger-system svc/honeycomb-adapter 9090:9090
+curl http://localhost:9090/-/healthy
+
+# Test query translation
+curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"test\"}[5m]))"
+```
+
+**Note**: This is separate from the OTel Collector setup above. The adapter enables direct querying, while the OTel Collector forwards metrics for storage.
 
 ## Detailed Installation Steps
 
@@ -497,19 +490,19 @@ The Prometheus configuration includes three key metrics:
 - **Latency**: 95th percentile response time
 - **Request Rate**: Number of requests per second
 
-### Dynatrace Metrics (Optional)
+### Honeycomb Metrics (Optional)
 
-When enabled, the Dynatrace configuration includes:
+When using the Honeycomb adapter, the configuration includes:
 
-- **Success Rate**: Server-side error rate from Dynatrace APM
-- **Latency**: Average response time from Dynatrace APM
+- **Success Rate**: HTTP success rate from Honeycomb telemetry data
+- **Latency**: P95 response time from Honeycomb telemetry data
 
-**Note**: Dynatrace metrics are currently commented out. See the "Optional: Enable Dynatrace Metrics" section to enable them.
+**Note**: Honeycomb metrics are available via the Honeycomb-Prometheus adapter. See the "Optional: Enable Direct Honeycomb Querying" section.
 
 ## Canary Analysis Process
 
 1. **Traffic Split**: Flagger gradually shifts traffic from stable to canary version
-2. **Metric Collection**: Both Prometheus and Dynatrace metrics are collected
+2. **Metric Collection**: Prometheus metrics are collected and optionally forwarded to Honeycomb
 3. **Threshold Validation**: All metrics must pass their thresholds
 4. **Decision Making**: If any metric fails, the canary is rolled back
 5. **Promotion**: If all metrics pass, the canary becomes the new stable version
@@ -518,7 +511,7 @@ When enabled, the Dynatrace configuration includes:
 
 ### Adjusting Thresholds
 
-Edit the `thresholdRange` values in `canary-dual-metrics.yaml`:
+Edit the `thresholdRange` values in `canary-honeycomb.yaml`:
 
 ```yaml
 thresholdRange:
