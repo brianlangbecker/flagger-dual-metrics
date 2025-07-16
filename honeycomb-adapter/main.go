@@ -422,6 +422,17 @@ func (h *HoneycombAdapter) executeHoneycombQueryByID(dataset string, queryID str
 		return nil, fmt.Errorf("honeycomb API returned status %d", resp.StatusCode)
 	}
 
+	// Check if we got HTTP 201 (Created) with Location header
+	if resp.StatusCode == http.StatusCreated {
+		location := resp.Header.Get("Location")
+		if location != "" {
+			log.Printf("🔗 Got HTTP 201 with Location header: %s", location)
+			
+			// Follow the Location header to get actual results
+			return h.getQueryResultsByLocation(dataset, location)
+		}
+	}
+
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("❌ Failed to decode response: %v", err)
@@ -429,6 +440,51 @@ func (h *HoneycombAdapter) executeHoneycombQueryByID(dataset string, queryID str
 	}
 
 	log.Printf("📊 Query execution results: %+v", result)
+	return result, nil
+}
+
+func (h *HoneycombAdapter) getQueryResultsByLocation(dataset string, location string) (map[string]interface{}, error) {
+	// The location header gives us the path, we need to construct the full URL
+	fullURL := fmt.Sprintf("%s%s", h.honeycombBaseURL, location)
+	
+	log.Printf("🔗 Following Location header to get actual results:")
+	log.Printf("  URL: %s", fullURL)
+
+	req, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request for location: %v", err)
+	}
+
+	req.Header.Set("X-Honeycomb-Team", h.honeycombAPIKey)
+	
+	log.Printf("📤 HTTP Request (Get Results by Location):")
+	log.Printf("  URL: %s", fullURL)
+	log.Printf("  Method: GET")
+	log.Printf("  Headers: X-Honeycomb-Team=%s...", h.honeycombAPIKey[:8])
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ HTTP request failed: %v", err)
+		return nil, fmt.Errorf("failed to execute location request: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	log.Printf("📥 HTTP Response (Get Results by Location):")
+	log.Printf("  Status: %d %s", resp.StatusCode, resp.Status)
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Honeycomb API returned status %d for location", resp.StatusCode)
+		return nil, fmt.Errorf("honeycomb API returned status %d for location", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("❌ Failed to decode location response: %v", err)
+		return nil, fmt.Errorf("failed to decode location response: %v", err)
+	}
+
+	log.Printf("📊 Actual query results from location: %+v", result)
 	return result, nil
 }
 
@@ -467,8 +523,47 @@ func (h *HoneycombAdapter) convertToPrometheusFormat(honeycombResult map[string]
 }
 
 func (h *HoneycombAdapter) extractValueFromHoneycombResult(result map[string]interface{}) float64 {
+	log.Printf("🔍 Extracting value from Honeycomb result structure...")
+	
 	// Navigate Honeycomb's JSON structure to extract the numeric result
 	if data, ok := result["data"].(map[string]interface{}); ok {
+		log.Printf("📊 Found data field in result")
+		
+		// Try the results array first (this is where the total COUNT is)
+		if results, ok := data["results"].([]interface{}); ok && len(results) > 0 {
+			log.Printf("📊 Found results array with %d items", len(results))
+			
+			if firstResult, ok := results[0].(map[string]interface{}); ok {
+				if dataPoint, ok := firstResult["data"].(map[string]interface{}); ok {
+					log.Printf("📊 Found data point: %+v", dataPoint)
+					
+					// Look for calculated values (COUNT, P95, AVG, etc.)
+					for key, v := range dataPoint {
+						if strings.Contains(strings.ToUpper(key), "COUNT") || 
+						   strings.Contains(strings.ToUpper(key), "AVG") ||
+						   strings.Contains(strings.ToUpper(key), "P95") ||
+						   strings.Contains(strings.ToUpper(key), "DURATION_MS") {
+							if val, ok := v.(float64); ok {
+								log.Printf("✅ Extracted value %f from field %s", val, key)
+								h.logDebug("Extracted value %f from field %s", val, key)
+								return val
+							}
+						}
+					}
+					
+					// Fallback: try any numeric value
+					for key, v := range dataPoint {
+						if val, ok := v.(float64); ok {
+							log.Printf("✅ Extracted fallback value %f from field %s", val, key)
+							h.logDebug("Extracted fallback value: %f", val)
+							return val
+						}
+					}
+				}
+			}
+		}
+		
+		// Fallback: try the old structure for backward compatibility
 		if results, ok := data["results"].([]interface{}); ok && len(results) > 0 {
 			if firstResult, ok := results[0].(map[string]interface{}); ok {
 				if dataPoints, ok := firstResult["data"].([]interface{}); ok && len(dataPoints) > 0 {
@@ -480,17 +575,10 @@ func (h *HoneycombAdapter) extractValueFromHoneycombResult(result map[string]int
 							   strings.Contains(strings.ToLower(key), "p95") ||
 							   strings.Contains(strings.ToLower(key), "duration_ms") {
 								if val, ok := v.(float64); ok {
+									log.Printf("✅ Extracted value %f from field %s (old structure)", val, key)
 									h.logDebug("Extracted value %f from field %s", val, key)
 									return val
 								}
-							}
-						}
-						
-						// Fallback: try any numeric value
-						for _, v := range point {
-							if val, ok := v.(float64); ok {
-								h.logDebug("Extracted fallback value: %f", val)
-								return val
 							}
 						}
 					}
@@ -499,6 +587,7 @@ func (h *HoneycombAdapter) extractValueFromHoneycombResult(result map[string]int
 		}
 	}
 
+	log.Printf("❌ No numeric value found in Honeycomb result, returning 0")
 	h.logDebug("No numeric value found in Honeycomb result, returning 0")
 	return 0.0
 }
