@@ -1,0 +1,55 @@
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: honeycomb-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://honeycomb-adapter.flagger-system:9090
+  query: |
+    sum(
+      rate(
+        http_requests_total{
+          service="{{ args.name }}"
+        }[5m]
+      )
+    ) by (service)
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: honeycomb-latency
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://honeycomb-adapter.flagger-system:9090
+  query: |
+    histogram_quantile(0.95,
+      sum(
+        rate(
+          http_request_duration_seconds_bucket{
+            service="{{ args.name }}"
+          }[5m]
+        )
+      ) by (service, le)
+    )
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: honeycomb-request-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://honeycomb-adapter.flagger-system:9090
+  query: |
+    sum(
+      rate(
+        http_requests_total{
+          service="{{ args.name }}"
+        }[5m]
+      )
+    )

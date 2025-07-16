@@ -32,10 +32,11 @@ type PrometheusResponse struct {
 }
 
 type HoneycombQuery struct {
-	TimeRange    TimeRange     `json:"time_range"`
+	TimeRange    int           `json:"time_range"`  // Changed to int (seconds)
 	Granularity  int          `json:"granularity,omitempty"`
 	Calculations []Calculation `json:"calculations"`
 	Filters      []Filter     `json:"filters,omitempty"`
+	Orders       []Order      `json:"orders,omitempty"`
 }
 
 type Calculation struct {
@@ -49,6 +50,11 @@ type Filter struct {
 	Value  interface{} `json:"value"`
 }
 
+type Order struct {
+	Op    string `json:"op"`
+	Order string `json:"order"`
+}
+
 type TimeRange struct {
 	StartTime int64 `json:"start_time"`
 	EndTime   int64 `json:"end_time"`
@@ -57,7 +63,7 @@ type TimeRange struct {
 func main() {
 	adapter := &HoneycombAdapter{
 		honeycombAPIKey:  getEnv("HONEYCOMB_API_KEY", ""),
-		honeycombDataset: getEnv("HONEYCOMB_DATASET", "podinfo-service"),
+		honeycombDataset: getEnv("HONEYCOMB_DATASET", ""),
 		honeycombBaseURL: getEnv("HONEYCOMB_BASE_URL", "https://api.honeycomb.io"),
 		logLevel:         getEnv("LOG_LEVEL", "info"),
 	}
@@ -66,14 +72,22 @@ func main() {
 		log.Fatal("HONEYCOMB_API_KEY environment variable is required")
 	}
 
+	log.Printf("🔑 API Key: %s", adapter.honeycombAPIKey[:8]+"...") // Show first 8 chars
+	log.Printf("🔧 Log Level: %s", adapter.logLevel)
+
 	http.HandleFunc("/api/v1/query", adapter.handleQuery)
 	http.HandleFunc("/api/v1/query_range", adapter.handleQueryRange)
 	http.HandleFunc("/-/healthy", adapter.handleHealth)
 	http.HandleFunc("/-/ready", adapter.handleReady)
 
 	port := getEnv("PORT", "9090")
-	log.Printf("Starting Honeycomb-Prometheus adapter on port %s", port)
-	log.Printf("Dataset: %s, Base URL: %s", adapter.honeycombDataset, adapter.honeycombBaseURL)
+	log.Printf("🚀 Starting Honeycomb-Prometheus adapter on port %s", port)
+	log.Printf("🌐 Base URL: %s", adapter.honeycombBaseURL)
+	log.Printf("📋 Endpoints:")
+	log.Printf("  - GET /api/v1/query - Query endpoint")
+	log.Printf("  - GET /-/healthy - Health check")
+	log.Printf("  - GET /-/ready - Readiness check")
+	log.Printf("✅ Adapter ready to receive requests!")
 	
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
@@ -82,6 +96,7 @@ func (h *HoneycombAdapter) handleQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	timeParam := r.URL.Query().Get("time")
 
+	log.Printf("🔍 Received PromQL query: %s", query)
 	h.logDebug("Received query: %s", query)
 
 	if query == "" {
@@ -92,28 +107,35 @@ func (h *HoneycombAdapter) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Parse the PromQL query and convert to Honeycomb query
 	honeycombQuery, err := h.translatePromQLToHoneycomb(query)
 	if err != nil {
+		log.Printf("❌ Query translation error: %v", err)
 		h.logError("Query translation error: %v", err)
 		http.Error(w, fmt.Sprintf("Query translation error: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("🔄 Translated to Honeycomb query: %+v", honeycombQuery)
 	h.logDebug("Translated to Honeycomb query: %+v", honeycombQuery)
 
 	// Execute Honeycomb query
-	result, err := h.executeHoneycombQuery(honeycombQuery)
+	serviceName := h.extractServiceName(query)
+	result, err := h.executeHoneycombQuery(honeycombQuery, serviceName)
 	if err != nil {
+		log.Printf("❌ Honeycomb query error: %v", err)
 		h.logError("Honeycomb query error: %v", err)
 		http.Error(w, fmt.Sprintf("Honeycomb query error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("✅ Honeycomb result: %+v", result)
 	h.logDebug("Honeycomb result: %+v", result)
 
 	// Convert Honeycomb result to Prometheus format
 	promResponse := h.convertToPrometheusFormat(result, timeParam)
+	log.Printf("📊 Returning Prometheus response: %+v", promResponse)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(promResponse); err != nil {
+		log.Printf("❌ Response encoding error: %v", err)
 		h.logError("Response encoding error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
@@ -133,14 +155,11 @@ func (h *HoneycombAdapter) handleHealth(w http.ResponseWriter, r *http.Request) 
 func (h *HoneycombAdapter) handleReady(w http.ResponseWriter, r *http.Request) {
 	// Test Honeycomb connectivity
 	testQuery := &HoneycombQuery{
-		TimeRange: TimeRange{
-			StartTime: time.Now().Add(-1 * time.Minute).Unix(),
-			EndTime:   time.Now().Unix(),
-		},
+		TimeRange: 60, // 1 minute in seconds
 		Calculations: []Calculation{{Op: "COUNT"}},
 	}
 
-	_, err := h.executeHoneycombQuery(testQuery)
+	_, err := h.executeHoneycombQuery(testQuery, "test")
 	if err != nil {
 		h.logError("Readiness check failed: %v", err)
 		http.Error(w, "Not ready", http.StatusServiceUnavailable)
@@ -152,28 +171,16 @@ func (h *HoneycombAdapter) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*HoneycombQuery, error) {
-	serviceName := h.extractServiceName(promQL)
 	timeWindow := h.extractTimeWindow(promQL)
 
-	startTime := time.Now().Add(-timeWindow).Unix()
-	endTime := time.Now().Unix()
-
 	baseQuery := &HoneycombQuery{
-		TimeRange: TimeRange{
-			StartTime: startTime,
-			EndTime:   endTime,
-		},
+		TimeRange: int(timeWindow.Seconds()), // Convert to seconds
 		Filters: []Filter{},
+		Orders: []Order{{Op: "COUNT", Order: "descending"}},
 	}
 
-	// Add service filter if found
-	if serviceName != "" {
-		baseQuery.Filters = append(baseQuery.Filters, Filter{
-			Column: "service.name",
-			Op:     "=",
-			Value:  serviceName,
-		})
-	}
+	// No need to add service filter - dataset name already identifies the service
+	// The service name is used as the dataset in the URL: /1/queries/{serviceName}
 
 	// Error rate query pattern
 	if strings.Contains(promQL, "http_requests_total") && strings.Contains(promQL, "code!~\"5.*\"") {
@@ -218,24 +225,41 @@ func (h *HoneycombAdapter) translatePromQLToHoneycomb(promQL string) (*Honeycomb
 }
 
 func (h *HoneycombAdapter) extractServiceName(promQL string) string {
+	log.Printf("🔍 Extracting service name from PromQL: %s", promQL)
+	
 	// Pattern 1: service="my-app"
 	re1 := regexp.MustCompile(`service="([^"]+)"`)
 	if matches := re1.FindStringSubmatch(promQL); len(matches) > 1 {
-		return matches[1]
+		serviceName := matches[1]
+		log.Printf("📍 Found service name (pattern 1): %s", serviceName)
+		// Handle Flagger template variables
+		if strings.Contains(serviceName, "{{ args.name }}") {
+			// Extract the actual service name from the template
+			// This assumes the template has been processed by Flagger
+			serviceName = strings.ReplaceAll(serviceName, "{{ args.name }}", "")
+			serviceName = strings.Trim(serviceName, " -")
+			log.Printf("📍 Processed template service name: %s", serviceName)
+		}
+		return serviceName
 	}
 
 	// Pattern 2: job="my-app"
 	re2 := regexp.MustCompile(`job="([^"]+)"`)
 	if matches := re2.FindStringSubmatch(promQL); len(matches) > 1 {
+		log.Printf("📍 Found service name (pattern 2): %s", matches[1])
 		return matches[1]
 	}
 
-	// Pattern 3: Flagger template variable
+	// Pattern 3: Direct template variable usage
 	re3 := regexp.MustCompile(`\{\{\s*args\.name\s*\}\}`)
 	if re3.MatchString(promQL) {
-		return "{{ args.name }}" // Will be replaced by Flagger
+		log.Printf("📍 Found template variable in query")
+		// Flagger will replace this with the actual service name
+		// For now, we'll return empty and let the query filter handle it
+		return ""
 	}
 
+	log.Printf("⚠️  No service name found in query: %s", promQL)
 	h.logDebug("No service name found in query: %s", promQL)
 	return ""
 }
@@ -248,7 +272,7 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 	if len(matches) >= 3 {
 		value, err := strconv.Atoi(matches[1])
 		if err != nil {
-			return 5 * time.Minute // default
+			return 8 * time.Hour // default changed to 8 hours
 		}
 		
 		unit := matches[2]
@@ -264,18 +288,109 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 		}
 	}
 	
-	return 5 * time.Minute // default
+	return 8 * time.Hour // default changed to 8 hours
 }
 
-func (h *HoneycombAdapter) executeHoneycombQuery(query *HoneycombQuery) (map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/1/query/%s", h.honeycombBaseURL, h.honeycombDataset)
+func (h *HoneycombAdapter) executeHoneycombQuery(query *HoneycombQuery, serviceName string) (map[string]interface{}, error) {
+	// Use service name as dataset - no need to extract from filters
+	dataset := serviceName
+	if dataset == "" {
+		dataset = "unknown"
+	}
+	
+	// Step 1: Create the query and get the ID
+	queryID, err := h.createHoneycombQuery(dataset, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create query: %v", err)
+	}
+	
+	log.Printf("🆔 Created query with ID: %s", queryID)
+	
+	// Step 2: Execute the query using the ID
+	return h.executeHoneycombQueryByID(dataset, queryID)
+}
+
+func (h *HoneycombAdapter) createHoneycombQuery(dataset string, query *HoneycombQuery) (string, error) {
+	// Use the correct Honeycomb API endpoint: /1/queries/{dataset}
+	url := fmt.Sprintf("%s/1/queries/%s", h.honeycombBaseURL, dataset)
+	log.Printf("🎯 Using Honeycomb dataset: %s", dataset)
 
 	jsonData, err := json.Marshal(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal query: %v", err)
+		return "", fmt.Errorf("failed to marshal query: %v", err)
 	}
 
+	log.Printf("🚀 Creating query in Honeycomb: %s", string(jsonData))
 	h.logDebug("Sending to Honeycomb: %s", string(jsonData))
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Honeycomb-Team", h.honeycombAPIKey)
+	
+	log.Printf("📤 HTTP Request (Create Query):")
+	log.Printf("  URL: %s", url)
+	log.Printf("  Method: POST")
+	log.Printf("  Headers: Content-Type=application/json, X-Honeycomb-Team=%s...", h.honeycombAPIKey[:8])
+	log.Printf("  Body: %s", string(jsonData))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ HTTP request failed: %v", err)
+		return "", fmt.Errorf("failed to execute request: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	log.Printf("📥 HTTP Response (Create Query):")
+	log.Printf("  Status: %d %s", resp.StatusCode, resp.Status)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("❌ Honeycomb API returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("honeycomb API returned status %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("❌ Failed to decode response: %v", err)
+		return "", fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	log.Printf("📊 Query creation response: %+v", result)
+	
+	// Extract the query ID
+	if id, ok := result["id"].(string); ok {
+		return id, nil
+	}
+	
+	return "", fmt.Errorf("no query ID returned from Honeycomb")
+}
+
+func (h *HoneycombAdapter) executeHoneycombQueryByID(dataset string, queryID string) (map[string]interface{}, error) {
+	// Use the query results endpoint: POST /1/query_results/{dataset}
+	url := fmt.Sprintf("%s/1/query_results/%s", h.honeycombBaseURL, dataset)
+	
+	// Create the request body with query_id
+	requestBody := map[string]interface{}{
+		"query_id":                   queryID,
+		"disable_series":             false,
+		"disable_total_by_aggregate": true,
+		"disable_other_by_aggregate": true,
+		"limit":                      10000,
+	}
+	
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %v", err)
+	}
+	
+	log.Printf("🔍 Executing query by ID:")
+	log.Printf("  URL: %s", url)
+	log.Printf("  Query ID: %s", queryID)
+	log.Printf("  Request body: %s", string(jsonData))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -284,23 +399,36 @@ func (h *HoneycombAdapter) executeHoneycombQuery(query *HoneycombQuery) (map[str
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Honeycomb-Team", h.honeycombAPIKey)
+	
+	log.Printf("📤 HTTP Request (Execute Query):")
+	log.Printf("  URL: %s", url)
+	log.Printf("  Method: POST")
+	log.Printf("  Headers: Content-Type=application/json, X-Honeycomb-Team=%s...", h.honeycombAPIKey[:8])
+	log.Printf("  Body: %s", string(jsonData))
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("❌ HTTP request failed: %v", err)
 		return nil, fmt.Errorf("failed to execute request: %v", err)
 	}
 	defer resp.Body.Close()
+	
+	log.Printf("📥 HTTP Response (Execute Query):")
+	log.Printf("  Status: %d %s", resp.StatusCode, resp.Status)
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("❌ Honeycomb API returned status %d", resp.StatusCode)
 		return nil, fmt.Errorf("honeycomb API returned status %d", resp.StatusCode)
 	}
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("❌ Failed to decode response: %v", err)
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
+	log.Printf("📊 Query execution results: %+v", result)
 	return result, nil
 }
 

@@ -1,0 +1,27 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: control-plane
+spec:
+  values:
+    meshConfig:
+      extensionProviders:
+        - name: otel-collector
+          envoyOtelAls:
+            service: otel-collector.flagger-system.svc.cluster.local
+            port: 4317
+      defaultConfig:
+        tracing:
+          sampling: 100.0
+        proxyMetadata:
+          PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: otel-demo
+  namespace: istio-system
+spec:
+  tracing:
+  - providers:
+    - name: otel-collector

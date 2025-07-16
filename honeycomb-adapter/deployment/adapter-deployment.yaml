@@ -18,7 +18,7 @@ spec:
       containers:
       - name: adapter
         image: honeycomb-adapter:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         ports:
         - containerPort: 9090
           name: http
@@ -27,10 +27,8 @@ spec:
         - name: HONEYCOMB_API_KEY
           valueFrom:
             secretKeyRef:
-              name: honeycomb-secret
+              name: honeycomb-query-secret
               key: api-key
-        - name: HONEYCOMB_DATASET
-          value: "flagger-metrics"
         - name: HONEYCOMB_BASE_URL
           value: "https://api.honeycomb.io"
         - name: LOG_LEVEL

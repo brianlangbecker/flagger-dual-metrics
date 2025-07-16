@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-tracing
+  namespace: istio-system
+data:
+  mesh: |
+    defaultConfig:
+      tracing:
+        sampling: 100.0
+        zipkin:
+          address: otel-collector.flagger-system:9411
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: tracing-default
+  namespace: istio-system
+spec:
+  tracing:
+  - providers:
+    - name: jaeger

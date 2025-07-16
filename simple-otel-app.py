@@ -13,7 +13,7 @@ from opentelemetry.instrumentation.requests import RequestsInstrumentor
 
 # Configure OpenTelemetry
 resource = Resource.create({
-    "service.name": "podinfo",
+    "service.name": "cosmic-canary-service",
     "service.version": "1.0.0",
 })
 
@@ -110,7 +110,7 @@ def load_test():
 if __name__ == '__main__':
     print("🚀 Starting OpenTelemetry instrumented app")
     print(f"📡 OTLP Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://otel-collector.flagger-system:4318/v1/traces')}")
-    print(f"🔍 Service Name: podinfo")
+    print(f"🔍 Service Name: cosmic-canary-service")
     print("📋 Available endpoints:")
     print("  GET /version - Get app version")
     print("  GET /healthz - Health check")

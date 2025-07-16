@@ -25,6 +25,7 @@ WORKDIR /root/
 
 # Copy the binary from builder stage
 COPY --from=builder /app/honeycomb-adapter .
+RUN chmod +x honeycomb-adapter
 
 # Expose port
 EXPOSE 9090
