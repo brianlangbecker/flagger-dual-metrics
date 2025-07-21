@@ -153,9 +153,9 @@ func (h *HoneycombAdapter) handleHealth(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HoneycombAdapter) handleReady(w http.ResponseWriter, r *http.Request) {
-	// Test Honeycomb connectivity
+	// Test Honeycomb connectivity - use 10 minute minimum
 	testQuery := &HoneycombQuery{
-		TimeRange: 60, // 1 minute in seconds
+		TimeRange: 600, // 10 minutes in seconds
 		Calculations: []Calculation{{Op: "COUNT"}},
 	}
 
@@ -269,26 +269,39 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 	re := regexp.MustCompile(`\[(\d+)([smhd])\]`)
 	matches := re.FindStringSubmatch(promQL)
 	
+	minWindow := 10 * time.Minute // Minimum 10 minutes for data ingestion
+	
 	if len(matches) >= 3 {
 		value, err := strconv.Atoi(matches[1])
 		if err != nil {
-			return 8 * time.Hour // default changed to 8 hours
+			return minWindow
 		}
 		
+		var requestedWindow time.Duration
 		unit := matches[2]
 		switch unit {
 		case "s":
-			return time.Duration(value) * time.Second
+			requestedWindow = time.Duration(value) * time.Second
 		case "m":
-			return time.Duration(value) * time.Minute
+			requestedWindow = time.Duration(value) * time.Minute
 		case "h":
-			return time.Duration(value) * time.Hour
+			requestedWindow = time.Duration(value) * time.Hour
 		case "d":
-			return time.Duration(value) * 24 * time.Hour
+			requestedWindow = time.Duration(value) * 24 * time.Hour
+		default:
+			return minWindow
 		}
+		
+		// Always use at least 10 minutes to ensure data availability
+		if requestedWindow < minWindow {
+			log.Printf("📊 Requested window %v is too small, using minimum %v", requestedWindow, minWindow)
+			return minWindow
+		}
+		
+		return requestedWindow
 	}
 	
-	return 8 * time.Hour // default changed to 8 hours
+	return minWindow
 }
 
 func (h *HoneycombAdapter) executeHoneycombQuery(query *HoneycombQuery, serviceName string) (map[string]interface{}, error) {
@@ -450,42 +463,55 @@ func (h *HoneycombAdapter) getQueryResultsByLocation(dataset string, location st
 	log.Printf("🔗 Following Location header to get actual results:")
 	log.Printf("  URL: %s", fullURL)
 
-	req, err := http.NewRequest("GET", fullURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request for location: %v", err)
-	}
-
-	req.Header.Set("X-Honeycomb-Team", h.honeycombAPIKey)
-	
-	log.Printf("📤 HTTP Request (Get Results by Location):")
-	log.Printf("  URL: %s", fullURL)
-	log.Printf("  Method: GET")
-	log.Printf("  Headers: X-Honeycomb-Team=%s...", h.honeycombAPIKey[:8])
-
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("❌ HTTP request failed: %v", err)
-		return nil, fmt.Errorf("failed to execute location request: %v", err)
-	}
-	defer resp.Body.Close()
 	
-	log.Printf("📥 HTTP Response (Get Results by Location):")
-	log.Printf("  Status: %d %s", resp.StatusCode, resp.Status)
+	// Poll until query completes (max 10 attempts, 3 seconds apart)
+	maxAttempts := 10
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		log.Printf("⏳ Polling attempt %d/%d for query completion...", attempt, maxAttempts)
+		
+		req, err := http.NewRequest("GET", fullURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request for location: %v", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("❌ Honeycomb API returned status %d for location", resp.StatusCode)
-		return nil, fmt.Errorf("honeycomb API returned status %d for location", resp.StatusCode)
+		req.Header.Set("X-Honeycomb-Team", h.honeycombAPIKey)
+		
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("❌ HTTP request failed: %v", err)
+			return nil, fmt.Errorf("failed to execute location request: %v", err)
+		}
+		
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("❌ Honeycomb API returned status %d for location", resp.StatusCode)
+			return nil, fmt.Errorf("honeycomb API returned status %d for location", resp.StatusCode)
+		}
+
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			log.Printf("❌ Failed to decode location response: %v", err)
+			return nil, fmt.Errorf("failed to decode location response: %v", err)
+		}
+		resp.Body.Close()
+
+		// Check if query is complete
+		if complete, ok := result["complete"].(bool); ok && complete {
+			log.Printf("✅ Query completed on attempt %d!", attempt)
+			log.Printf("📊 Final query results: %+v", result)
+			return result, nil
+		}
+		
+		log.Printf("🔄 Query still running... waiting 3 seconds before next attempt")
+		if attempt < maxAttempts {
+			time.Sleep(3 * time.Second)
+		}
 	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("❌ Failed to decode location response: %v", err)
-		return nil, fmt.Errorf("failed to decode location response: %v", err)
-	}
-
-	log.Printf("📊 Actual query results from location: %+v", result)
-	return result, nil
+	
+	log.Printf("❌ Query did not complete after %d attempts", maxAttempts)
+	return nil, fmt.Errorf("query did not complete after %d attempts", maxAttempts)
 }
 
 func (h *HoneycombAdapter) convertToPrometheusFormat(honeycombResult map[string]interface{}, timeParam string) *PrometheusResponse {

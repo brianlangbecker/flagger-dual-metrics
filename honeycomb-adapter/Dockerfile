@@ -21,11 +21,20 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
+# Create non-root user
+RUN addgroup -g 1000 appgroup && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
+
+WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/honeycomb-adapter .
 RUN chmod +x honeycomb-adapter
+
+# Change ownership to non-root user
+RUN chown appuser:appgroup honeycomb-adapter
+
+# Switch to non-root user
+USER appuser
 
 # Expose port
 EXPOSE 9090
