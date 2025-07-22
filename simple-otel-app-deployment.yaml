@@ -1,0 +1,199 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simple-otel-app
+  namespace: test
+data:
+  app.py: |
+    #!/usr/bin/env python3
+    from flask import Flask, jsonify, request
+    import time
+    import random
+    import os
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.instrumentation.flask import FlaskInstrumentor
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
+    # Configure OpenTelemetry
+    resource = Resource.create({
+        "service.name": "cosmic-canary-service",
+        "service.version": "1.0.0",
+    })
+
+    trace.set_tracer_provider(TracerProvider(resource=resource))
+    tracer = trace.get_tracer(__name__)
+
+    # Configure OTLP exporter
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://otel-collector.flagger-system:4318/v1/traces')
+    )
+    span_processor = BatchSpanProcessor(otlp_exporter)
+    trace.get_tracer_provider().add_span_processor(span_processor)
+
+    app = Flask(__name__)
+
+    # Auto-instrument Flask and requests
+    FlaskInstrumentor().instrument_app(app)
+    RequestsInstrumentor().instrument()
+
+    @app.route('/')
+    def home():
+        # Add custom span attributes for metrics
+        span = trace.get_current_span()
+        if span:
+            span.set_attribute("http.method", "GET")
+            span.set_attribute("http.route", "/")
+            span.set_attribute("http.status_code", 200)
+            span.set_attribute("duration_ms", random.uniform(10, 100))
+        
+        # Simulate processing time
+        time.sleep(random.uniform(0.01, 0.1))
+        
+        return jsonify({
+            "service": "cosmic-canary-service",
+            "version": "1.0.0",
+            "message": "Hello from cosmic canary service!",
+            "timestamp": time.time(),
+            "pod": os.getenv('HOSTNAME', 'unknown')
+        })
+
+    @app.route('/health')
+    def health():
+        span = trace.get_current_span()
+        if span:
+            span.set_attribute("http.method", "GET")
+            span.set_attribute("http.route", "/health")
+            span.set_attribute("http.status_code", 200)
+        
+        return jsonify({"status": "healthy", "service": "cosmic-canary-service"})
+
+    @app.route('/version')
+    def version():
+        span = trace.get_current_span()
+        if span:
+            span.set_attribute("http.method", "GET")
+            span.set_attribute("http.route", "/version")
+            span.set_attribute("http.status_code", 200)
+            
+        return jsonify({
+            "version": "1.0.0",
+            "service": "cosmic-canary-service"
+        })
+
+    @app.route('/error')
+    def simulate_error():
+        # Simulate some errors for testing
+        if random.random() < 0.3:  # 30% error rate
+            span = trace.get_current_span()
+            if span:
+                span.set_attribute("http.method", "GET")
+                span.set_attribute("http.route", "/error")
+                span.set_attribute("http.status_code", 500)
+                span.set_attribute("error", True)
+            
+            return jsonify({"error": "Simulated server error"}), 500
+        else:
+            span = trace.get_current_span()
+            if span:
+                span.set_attribute("http.method", "GET")
+                span.set_attribute("http.route", "/error")
+                span.set_attribute("http.status_code", 200)
+            
+            return jsonify({"message": "No error this time"})
+
+    if __name__ == '__main__':
+        print("🚀 Starting cosmic-canary-service")
+        print(f"📡 OTLP Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://otel-collector.flagger-system:4318/v1/traces')}")
+        print(f"🔍 Service Name: cosmic-canary-service")
+        print("📋 Available endpoints:")
+        print("  GET / - Main service endpoint")
+        print("  GET /health - Health check")
+        print("  GET /version - Version info")
+        print("  GET /error - Error simulation")
+        
+        app.run(host='0.0.0.0', port=8000, debug=False)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cosmic-canary-service
+  namespace: test
+  labels:
+    app: cosmic-canary-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cosmic-canary-service
+  template:
+    metadata:
+      labels:
+        app: cosmic-canary-service
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: app
+        image: python:3.9-slim
+        ports:
+        - containerPort: 8000
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector.flagger-system:4318/v1/traces"
+        - name: OTEL_SERVICE_NAME
+          value: "cosmic-canary-service"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=cosmic-canary-service,service.version=1.0.0"
+        command:
+        - /bin/sh
+        - -c
+        - |
+          apt-get update && apt-get install -y gcc
+          pip install flask opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-http opentelemetry-instrumentation-flask opentelemetry-instrumentation-requests
+          python /app/app.py
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+      volumes:
+      - name: app-code
+        configMap:
+          name: simple-otel-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cosmic-canary-service
+  namespace: test
+  labels:
+    app: cosmic-canary-service
+spec:
+  selector:
+    app: cosmic-canary-service
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP

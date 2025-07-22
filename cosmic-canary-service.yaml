@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cosmic-canary-service
+  namespace: test
+  labels:
+    app: cosmic-canary-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cosmic-canary-service
+  template:
+    metadata:
+      labels:
+        app: cosmic-canary-service
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: app
+        image: python:3.9-slim
+        ports:
+        - containerPort: 8000
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector.flagger-system:4318/v1/traces"
+        - name: OTEL_SERVICE_NAME
+          value: "cosmic-canary-service"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=cosmic-canary-service,service.version=1.0.0"
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install opentelemetry-api opentelemetry-sdk opentelemetry-auto-instrumentation opentelemetry-exporter-otlp flask
+          cat > /app.py << 'EOF'
+          from flask import Flask, jsonify
+          from opentelemetry import trace
+          from opentelemetry.sdk.trace import TracerProvider
+          from opentelemetry.sdk.resources import Resource
+          from opentelemetry.auto_instrumentation import sitecustomize
+          import os
+          import time
+          import random
+
+          # Configure OpenTelemetry
+          resource = Resource.create({
+              "service.name": "cosmic-canary-service",
+              "service.version": "1.0.0",
+          })
+
+          trace.set_tracer_provider(TracerProvider(resource=resource))
+          tracer = trace.get_tracer(__name__)
+
+          app = Flask(__name__)
+
+          @app.route('/')
+          def home():
+              with tracer.start_as_current_span("home_request") as span:
+                  # Add some attributes for metrics
+                  span.set_attribute("http.method", "GET")
+                  span.set_attribute("http.route", "/")
+                  span.set_attribute("http.status_code", 200)
+                  
+                  # Simulate some processing time
+                  time.sleep(random.uniform(0.01, 0.1))
+                  
+                  return jsonify({
+                      "service": "cosmic-canary-service",
+                      "version": "1.0.0",
+                      "message": "Hello from cosmic canary!",
+                      "timestamp": time.time()
+                  })
+
+          @app.route('/health')
+          def health():
+              with tracer.start_as_current_span("health_check") as span:
+                  span.set_attribute("http.method", "GET")
+                  span.set_attribute("http.route", "/health")
+                  span.set_attribute("http.status_code", 200)
+                  
+                  return jsonify({"status": "healthy"})
+
+          @app.route('/error')
+          def error():
+              with tracer.start_as_current_span("error_request") as span:
+                  span.set_attribute("http.method", "GET") 
+                  span.set_attribute("http.route", "/error")
+                  span.set_attribute("http.status_code", 500)
+                  span.set_attribute("error", True)
+                  
+                  return jsonify({"error": "Simulated error"}), 500
+
+          if __name__ == '__main__':
+              print("🚀 Starting cosmic-canary-service")
+              print(f"📡 OTLP Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT')}")
+              print(f"🔍 Service Name: cosmic-canary-service") 
+              app.run(host='0.0.0.0', port=8000, debug=True)
+          EOF
+          
+          opentelemetry-instrument python /app.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cosmic-canary-service
+  namespace: test
+  labels:
+    app: cosmic-canary-service
+spec:
+  selector:
+    app: cosmic-canary-service
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP

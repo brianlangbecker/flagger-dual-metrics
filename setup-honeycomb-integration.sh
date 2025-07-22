@@ -4,15 +4,17 @@
 # This script sets up Honeycomb secrets and deploys components for metrics export and querying
 #
 # Usage:
-#   ./setup-honeycomb-integration.sh                    # Interactive mode
+#   ./setup-honeycomb-integration.sh                    # Interactive mode (asks about existing secrets)
 #   ./setup-honeycomb-integration.sh --keep-existing    # Keep existing secrets, auto-deploy
 #   ./setup-honeycomb-integration.sh --skip-secrets     # Skip secret setup, deploy only
+#   ./setup-honeycomb-integration.sh --from-scratch     # Remove existing secrets, start fresh
 
 set -e
 
 # Parse command line arguments
 AUTO_KEEP_EXISTING=false
 SKIP_SECRETS=false
+FROM_SCRATCH=false
 
 for arg in "$@"; do
     case $arg in
@@ -22,11 +24,15 @@ for arg in "$@"; do
         --skip-secrets)
             SKIP_SECRETS=true
             ;;
+        --from-scratch)
+            FROM_SCRATCH=true
+            ;;
         --help|-h)
             echo "Usage: $0 [options]"
             echo "Options:"
             echo "  --keep-existing    Keep existing secrets and auto-deploy components"
-            echo "  --skip-secrets     Skip secret setup, only deploy configurations"
+            echo "  --skip-secrets     Skip secret setup, only deploy configurations"  
+            echo "  --from-scratch     Remove existing secrets and start fresh installation"
             echo "  --help, -h         Show this help message"
             exit 0
             ;;
@@ -67,6 +73,26 @@ echo "📁 Creating namespaces..."
 kubectl create namespace flagger-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
 
+# Handle from-scratch mode
+if [ "$FROM_SCRATCH" = true ]; then
+    echo ""
+    echo "🧹 From-scratch mode: Removing existing Honeycomb secrets..."
+    
+    # Remove secrets from all relevant namespaces
+    namespaces=("flagger-system" "istio-system" "test")
+    secrets=("honeycomb-otel-secret" "honeycomb-query-secret")
+    
+    for namespace in "${namespaces[@]}"; do
+        for secret in "${secrets[@]}"; do
+            if check_secret_exists "$secret" "$namespace"; then
+                echo "  🗑️  Removing $secret from $namespace"
+                kubectl delete secret "$secret" -n "$namespace" 2>/dev/null || true
+            fi
+        done
+    done
+    echo "✅ Clean slate ready!"
+fi
+
 # Check for existing secrets
 echo ""
 echo "🔍 Checking for existing Honeycomb secrets..."
@@ -88,6 +114,51 @@ if check_secret_exists "honeycomb-query-secret" "flagger-system"; then
     echo "✅ Found existing honeycomb-query-secret (query key: ${EXISTING_QUERY_KEY:0:8}...)"
 else
     echo "❌ honeycomb-query-secret not found"
+fi
+
+# Check if user wants to start from scratch (interactive mode only)
+if [ "$FROM_SCRATCH" = false ] && [ "$AUTO_KEEP_EXISTING" = false ] && [ "$SKIP_SECRETS" = false ]; then
+    if [ "$INGESTION_SECRET_EXISTS" = true ] || [ "$QUERY_SECRET_EXISTS" = true ]; then
+        echo ""
+        echo "🤔 Existing Honeycomb secrets detected!"
+        echo "   You have the following options:"
+        echo "   1) Keep existing secrets and continue"
+        echo "   2) Remove all secrets and start from scratch"
+        echo "   3) Configure secrets individually (default)"
+        read -p "What would you like to do? (1/2/3) [3]: " SCRATCH_CHOICE
+        
+        case "${SCRATCH_CHOICE:-3}" in
+            1)
+                AUTO_KEEP_EXISTING=true
+                echo "✅ Keeping existing secrets..."
+                ;;
+            2)
+                echo "🧹 Starting from scratch - removing existing secrets..."
+                # Remove secrets from all relevant namespaces
+                namespaces=("flagger-system" "istio-system" "test")
+                secrets=("honeycomb-otel-secret" "honeycomb-query-secret")
+                
+                for namespace in "${namespaces[@]}"; do
+                    for secret in "${secrets[@]}"; do
+                        if check_secret_exists "$secret" "$namespace"; then
+                            echo "  🗑️  Removing $secret from $namespace"
+                            kubectl delete secret "$secret" -n "$namespace" 2>/dev/null || true
+                        fi
+                    done
+                done
+                # Reset flags since we removed everything
+                INGESTION_SECRET_EXISTS=false
+                QUERY_SECRET_EXISTS=false
+                echo "✅ Clean slate ready!"
+                ;;
+            3)
+                echo "📝 Proceeding with individual configuration..."
+                ;;
+            *)
+                echo "📝 Invalid choice, proceeding with individual configuration..."
+                ;;
+        esac
+    fi
 fi
 
 # Setup Honeycomb Ingestion Key (for OTel Collector)

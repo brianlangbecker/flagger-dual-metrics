@@ -1,0 +1,56 @@
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: cosmic-canary
+  namespace: test
+spec:
+  # Reference the cosmic-canary-service deployment
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cosmic-canary-service
+  # Service configuration
+  service:
+    port: 8000
+  # Analysis configuration using Honeycomb metrics
+  analysis:
+    # Check every 30 seconds
+    interval: 30s
+    # Total number of iterations
+    threshold: 3
+    # Max traffic percentage during canary
+    maxWeight: 50
+    # Traffic increment steps
+    stepWeight: 10
+    # Metrics to validate (using Honeycomb adapter)
+    metrics:
+    - name: success-rate
+      templateRef:
+        name: honeycomb-success-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 70
+      interval: 30s
+    - name: latency
+      templateRef:
+        name: honeycomb-latency
+        namespace: flagger-system
+      thresholdRange:
+        max: 500
+      interval: 30s
+    - name: request-rate
+      templateRef:
+        name: honeycomb-request-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 1
+      interval: 30s
+    # Load testing webhook
+    webhooks:
+    - name: load-test
+      url: http://flagger-loadtester.test/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 30s -q 10 -c 2 http://cosmic-canary-service-canary.test:8000/"
+  # How long to wait for deployment
+  progressDeadlineSeconds: 60
