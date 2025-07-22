@@ -8,8 +8,8 @@ spec:
     type: prometheus
     address: http://honeycomb-adapter.flagger-system:9090
   query: |
-    sum(rate(http_requests_total{code!~"5.*",service="{{ args.name }}"}[5m])) / 
-    sum(rate(http_requests_total{service="{{ args.name }}"}[5m])) * 100
+    sum(rate(http_requests_total{code!~"5.*",service="{{ target }}"}[{{ interval }}])) / 
+    sum(rate(http_requests_total{service="{{ target }}"}[{{ interval }}])) * 100
 ---
 apiVersion: flagger.app/v1beta1
 kind: MetricTemplate
@@ -22,7 +22,7 @@ spec:
     address: http://honeycomb-adapter.flagger-system:9090
   query: |
     histogram_quantile(0.95, 
-      sum(rate(http_request_duration_seconds_bucket{service="{{ args.name }}"}[5m])) by (le)
+      sum(rate(http_request_duration_seconds_bucket{service="{{ target }}"}[{{ interval }}])) by (le)
     )
 ---
 apiVersion: flagger.app/v1beta1
@@ -35,4 +35,4 @@ spec:
     type: prometheus
     address: http://honeycomb-adapter.flagger-system:9090
   query: |
-    sum(rate(http_requests_total{service="{{ args.name }}"}[5m]))
+    sum(rate(http_requests_total{service="{{ target }}"}[{{ interval }}]))
