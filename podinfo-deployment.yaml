@@ -21,8 +21,6 @@ spec:
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9797"
-        # Enable OpenTelemetry auto-instrumentation
-        instrumentation.opentelemetry.io/inject-java: "honeycomb-instrumentation"
       labels:
         app: podinfo
     spec:
@@ -52,18 +50,6 @@ spec:
         env:
         - name: PODINFO_UI_COLOR
           value: "#34577c"
-        # OpenTelemetry configuration
-        - name: OTEL_SERVICE_NAME
-          value: "podinfo"
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: "https://api.honeycomb.io"
-        - name: OTEL_EXPORTER_OTLP_HEADERS
-          value: "x-honeycomb-team=$(HONEYCOMB_API_KEY)"
-        - name: HONEYCOMB_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: honeycomb-otel-secret
-              key: api-key
         livenessProbe:
           exec:
             command:
@@ -89,52 +75,3 @@ spec:
           requests:
             cpu: 100m
             memory: 64Mi
----
-apiVersion: flagger.app/v1beta1
-kind: Canary
-metadata:
-  name: podinfo-canary
-  namespace: test
-spec:
-  targetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: podinfo
-  progressDeadlineSeconds: 60
-  service:
-    port: 9898
-    targetPort: 9898
-    portDiscovery: true
-  analysis:
-    interval: 30s
-    threshold: 5
-    maxWeight: 50
-    stepWeight: 10
-    metrics:
-    - name: success-rate
-      templateRef:
-        name: honeycomb-success-rate
-        namespace: flagger-system
-      thresholdRange:
-        min: 95
-      interval: 30s
-    - name: latency
-      templateRef:
-        name: honeycomb-latency
-        namespace: flagger-system
-      thresholdRange:
-        max: 500
-      interval: 30s
-    - name: request-rate
-      templateRef:
-        name: honeycomb-request-rate
-        namespace: flagger-system
-      thresholdRange:
-        min: 1
-      interval: 30s
-    webhooks:
-    - name: load-test-get
-      url: http://flagger-loadtester.test/
-      timeout: 5s
-      metadata:
-        cmd: "hey -z 30s -q 10 -c 2 http://podinfo-canary.test:9898/"

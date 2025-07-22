@@ -1,0 +1,35 @@
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: working-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    vector(100)
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: working-latency
+  namespace: flagger-system  
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    vector(50)
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: working-request-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.istio-system:9090
+  query: |
+    vector(10)

@@ -42,6 +42,7 @@ Flagger works with Honeycomb through two approaches:
 
 ## Architecture
 
+### Approach 1: Metrics Forwarding (Default)
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Application   │───►│   Prometheus    │    │    Honeycomb    │
@@ -67,6 +68,42 @@ Flagger works with Honeycomb through two approaches:
                │  → Promotes if metrics pass     │
                │  → Honeycomb stores telemetry   │
                └─────────────────────────────────┘
+```
+
+### Approach 2: Direct Honeycomb Querying (Advanced)
+```
+┌─────────────────┐                           ┌─────────────────┐
+│   Application   │──── Telemetry ───────────►│    Honeycomb    │
+│                 │                           │                 │
+│   (Canary)      │                           │   (Primary      │
+└─────────────────┘                           │    Metrics)     │
+                                              └─────────────────┘
+                                                        │
+                                                        │ API Queries
+                                                        ▼
+                                              ┌─────────────────┐
+                                              │ Honeycomb-      │
+                                              │ Prometheus      │
+                                              │ Adapter         │
+                                              │                 │
+                                              │ • Query Polling │
+                                              │ • 10min Windows │
+                                              │ • Secure Runtime│
+                                              └─────────────────┘
+                                                        │
+                                                        │ Prometheus API
+                                                        ▼
+                                              ┌─────────────────┐
+                                              │     Flagger     │
+                                              │                 │
+                                              │ → Queries       │
+                                              │   Adapter       │
+                                              │ → Validates     │
+                                              │   Honeycomb     │
+                                              │   Metrics       │
+                                              │ → Promotes      │
+                                              │   Canary        │
+                                              └─────────────────┘
 ```
 
 ## Provider Definitions
@@ -124,7 +161,9 @@ The observability providers are configured in the following locations:
 
 **Note**: This setup will automatically install Istio and Flagger for you.
 
-## Quick Start
+## Quick Start (Approach 1: Metrics Forwarding)
+
+This Quick Start guide sets up **Approach 1** from the architecture above - metrics forwarding to Honeycomb via OpenTelemetry Collector while Flagger queries Prometheus directly.
 
 1. **Clone and navigate to the project:**
    ```bash
@@ -132,24 +171,27 @@ The observability providers are configured in the following locations:
    cd flagger-dual-metrics
    ```
 
-2. **Install Istio (required for traffic management):**
+2. **Set up Honeycomb API keys:**
+   Follow the [Honeycomb API Keys Setup](#honeycomb-api-keys-setup) section above to create both ingestion and query keys.
+
+3. **Install Istio (required for traffic management):**
    ```bash
    ./install-istio.sh
    ```
 
-3. **Install Flagger:**
+4. **Install Flagger:**
    ```bash
    ./install-flagger.sh
    ```
 
-4. **Configure metrics providers:**
+5. **Configure Honeycomb integration:**
    ```bash
-   ./setup-secrets.sh
+   ./setup-honeycomb-integration.sh --keep-existing
    ```
    
-   This will set up Prometheus metrics and optionally configure Honeycomb via OpenTelemetry Collector.
+   This will set up Prometheus metrics and deploy the OpenTelemetry Collector to forward metrics to Honeycomb.
 
-5. **Deploy the example canary:**
+6. **Deploy the example canary:**
    ```bash
    # For testing/demo purposes (recommended):
    kubectl apply -f simple-canary.yaml
@@ -159,11 +201,116 @@ The observability providers are configured in the following locations:
    kubectl apply -f canary-honeycomb.yaml
    ```
 
-6. **Monitor the canary deployment:**
+7. **Verify Honeycomb dataset:**
+   - Go to your Honeycomb UI → Data → Datasets
+   - Look for the `flagger-metrics` dataset (created automatically when metrics start flowing)
+   - You should see metrics arriving within 1-2 minutes of deploying applications
+
+8. **Monitor the canary deployment:**
    ```bash
    kubectl get canaries -n test
    kubectl describe canary podinfo-canary -n test
    ```
+
+### Verification Commands
+
+After setup, verify your installation:
+
+```bash
+# Check that secrets are created
+kubectl get secrets -n flagger-system | grep honeycomb
+
+# Check OTel collector (metrics forwarding to Honeycomb)
+kubectl get pods -n flagger-system -l app=otel-collector
+
+# Verify Honeycomb adapter (if using direct querying)
+kubectl get pods -n flagger-system -l app=honeycomb-adapter
+
+# Monitor OTel collector logs
+kubectl logs -n flagger-system deployment/otel-collector -f
+
+# Test adapter health (if deployed)
+kubectl port-forward -n flagger-system svc/honeycomb-adapter 9090:9090 &
+curl http://localhost:9090/-/healthy
+curl http://localhost:9090/-/ready
+```
+
+### Honeycomb Dataset Verification
+
+To confirm metrics are flowing to Honeycomb:
+
+1. **Check Dataset Creation:**
+   - Open Honeycomb UI → Data → Datasets
+   - Look for `flagger-metrics` dataset
+   - If missing, check OTel collector logs for errors
+
+2. **Verify Metric Flow:**
+   ```bash
+   # Check OTel collector is running and healthy
+   kubectl port-forward -n flagger-system svc/otel-collector 13133:13133 &
+   curl http://localhost:13133/  # Health check
+   
+   # Monitor metrics export
+   kubectl logs -n flagger-system deployment/otel-collector -f | grep -i honeycomb
+   ```
+
+3. **Expected Honeycomb Data:**
+   - Service metrics with `service.name` attributes
+   - HTTP request metrics with status codes
+   - Duration/latency measurements
+   - Error rates and counts
+
+## Honeycomb API Keys Setup
+
+**Important:** Honeycomb uses different types of API keys for different purposes. This setup requires both:
+
+### 1. Ingestion Key (for sending data TO Honeycomb)
+- **Purpose**: Send telemetry data from applications to Honeycomb
+- **Used by**: OpenTelemetry Collector, instrumented applications
+- **Secret name**: `honeycomb-otel-secret`
+- **Permissions**: Write access to send events/traces/metrics
+
+### 2. Query Key (for reading data FROM Honeycomb)  
+- **Purpose**: Query existing telemetry data in Honeycomb
+- **Used by**: Honeycomb-Prometheus adapter for Flagger queries
+- **Secret name**: `honeycomb-query-secret`
+- **Permissions**: Read access to query datasets
+
+### Setup Commands
+
+**Step 1: Create the flagger-system namespace**
+```bash
+kubectl create namespace flagger-system
+```
+
+**Step 2: Create Honeycomb secrets**
+```bash
+# Create ingestion secret (for sending telemetry data)
+kubectl create secret generic honeycomb-otel-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_INGESTION_KEY \
+  --namespace=flagger-system
+
+# Create query secret (for reading telemetry data)
+kubectl create secret generic honeycomb-query-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
+  --namespace=flagger-system
+```
+
+**Step 3: Verify secrets**
+```bash
+# Check that both secrets exist
+kubectl get secrets -n flagger-system | grep honeycomb
+
+# Verify secret contents (keys will be base64 encoded)
+kubectl get secret honeycomb-otel-secret -n flagger-system -o yaml
+kubectl get secret honeycomb-query-secret -n flagger-system -o yaml
+```
+
+**Where to get your keys:**
+1. **Ingestion Key**: Honeycomb → Environment Settings → API Keys → Create key with "Send Events" permissions
+2. **Query Key**: Honeycomb → Environment Settings → API Keys → Create key with "Read Events" permissions
+
+**Note:** Keep these keys secure and never commit them to version control!
 
 ## Optional: Enable Honeycomb Metrics Export
 
@@ -176,14 +323,14 @@ The setup includes an OpenTelemetry Collector that can scrape Prometheus metrics
 
 ### Configuration:
 The setup script will prompt you to configure Honeycomb. If you choose yes:
-1. Provide your Honeycomb API key
+1. Provide your Honeycomb **ingestion key**
 2. The OTel Collector will be deployed automatically
 
 ### Manual setup:
 ```bash
-# Create Honeycomb secret
+# Create Honeycomb ingestion secret (for sending data)
 kubectl create secret generic honeycomb-otel-secret \
-  --from-literal=api-key=YOUR_HONEYCOMB_API_KEY \
+  --from-literal=api-key=YOUR_HONEYCOMB_INGESTION_KEY \
   --namespace=flagger-system
 
 # Deploy OTel Collector
@@ -213,6 +360,9 @@ For advanced users who want Flagger to query Honeycomb directly (instead of just
 - Provides a Prometheus-compatible API that Flagger can query
 - Translates PromQL queries to Honeycomb Query API calls
 - Enables Honeycomb as a direct metrics provider for canary analysis
+- Implements robust query polling with timeout handling
+- Uses minimum 10-minute time windows to ensure data availability
+- Runs in a secure non-root container environment
 
 ### Prerequisites:
 - Your applications must send telemetry to Honeycomb with these attributes:
@@ -220,16 +370,33 @@ For advanced users who want Flagger to query Honeycomb directly (instead of just
   - `http.status_code` - HTTP status codes
   - `duration_ms` - Request duration
   - `error` - Error tracking (boolean)
+- Data ingestion delay: Allow 10+ minutes for telemetry to be queryable
 
 ### Setup:
+
+**Prerequisites:**
+Your applications must send telemetry to Honeycomb with these attributes:
+- `service.name` - Service identification
+- `http.status_code` - HTTP status codes
+- `duration_ms` - Request duration
+- `error` - Error tracking (boolean)
+- Data ingestion delay: Allow 10+ minutes for telemetry to be queryable
+
+**Step 1: Create Query Key Secret**
+The adapter needs a **query key** (not an ingestion key) to read data from Honeycomb:
+```bash
+# Create Honeycomb query secret (for reading data)
+kubectl create secret generic honeycomb-query-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
+  --namespace=flagger-system
+```
+
+**Step 2: Deploy the Adapter**
+
+**Option A: In-Cluster Build (Recommended)**
 ```bash
 # Navigate to the adapter directory
 cd honeycomb-adapter
-
-# Create Honeycomb API secret for the adapter
-kubectl create secret generic honeycomb-secret \
-  --from-literal=api-key=YOUR_HONEYCOMB_API_KEY \
-  --namespace=flagger-system
 
 # Build and deploy the adapter (builds Go code in-cluster)
 make build-and-deploy
@@ -241,17 +408,277 @@ kubectl apply -f examples/metric-templates.yaml
 kubectl apply -f examples/canary-example.yaml
 ```
 
+**Option B: Local Build**
+```bash
+# Build Docker image locally
+make docker-build
+
+# For Kind clusters
+kind load docker-image honeycomb-adapter:latest
+
+# For minikube
+eval $(minikube docker-env)
+make docker-build
+
+# Deploy
+kubectl apply -f deployment/
+```
+
 ### Verification:
 ```bash
 # Check adapter health
 kubectl port-forward -n flagger-system svc/honeycomb-adapter 9090:9090
 curl http://localhost:9090/-/healthy
 
+# Check readiness (tests Honeycomb connectivity)
+curl http://localhost:9090/-/ready
+
 # Test query translation
-curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"test\"}[5m]))"
+curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"test\"}[10m]))"
+
+# Monitor adapter logs
+kubectl logs -n flagger-system deployment/honeycomb-adapter -f
 ```
 
+### Supported Metrics
+
+The adapter currently supports these Flagger metric patterns:
+
+**Error Rate:**
+```promql
+# PromQL Pattern
+sum(rate(http_requests_total{code!~"5.*",service="my-app"}[10m])) / sum(rate(http_requests_total{service="my-app"}[10m])) * 100
+
+# Honeycomb Translation
+# Filters: http.status_code < 500 AND service.name = "my-app"
+# Calculation: (COUNT(*) WHERE error=false) / COUNT(*) * 100
+```
+
+**Response Time:**
+```promql
+# PromQL Pattern
+histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="my-app"}[10m])))
+
+# Honeycomb Translation
+# Filters: service.name = "my-app"
+# Calculation: P95(duration_ms)
+```
+
+**Request Rate:**
+```promql
+# PromQL Pattern
+sum(rate(http_requests_total{service="my-app"}[10m]))
+
+# Honeycomb Translation  
+# Filters: service.name = "my-app"
+# Calculation: COUNT(*) / time_window_seconds
+```
+
+### Configuration
+
+**Environment Variables:**
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `HONEYCOMB_API_KEY` | Honeycomb API key | - | Yes |
+| `HONEYCOMB_DATASET` | Target dataset name | `flagger-metrics` | No |
+| `HONEYCOMB_BASE_URL` | Honeycomb API URL | `https://api.honeycomb.io` | No |
+| `LOG_LEVEL` | Logging level | `info` | No |
+| `PORT` | Server port | `9090` | No |
+
+**Service Name Mapping:**
+The adapter extracts service names from PromQL queries using these patterns:
+```promql
+# Pattern 1: service label
+{service="my-app"}
+
+# Pattern 2: job label  
+{job="my-app"}
+
+# Pattern 3: Flagger template variable
+{service="{{ args.name }}"}
+```
+Ensure your Honeycomb data uses consistent `service.name` values.
+
+### Key Management Summary
+
+| Purpose | Secret Name | Key Type | Used By | Permissions |
+|---------|-------------|----------|---------|-------------|
+| **Send data** | `honeycomb-otel-secret` | Ingestion Key | OTel Collector, Apps | Write (send events) |
+| **Query data** | `honeycomb-query-secret` | Query Key | Honeycomb Adapter | Read (query datasets) |
+
+**Important:** Don't mix these up! The adapter will fail if you provide an ingestion key instead of a query key.
+
 **Note**: This is separate from the OTel Collector setup above. The adapter enables direct querying, while the OTel Collector forwards metrics for storage.
+
+## Quick Start (Approach 2: Direct Honeycomb Querying)
+
+For advanced users who want Flagger to query Honeycomb directly instead of Prometheus:
+
+1. **Complete Approach 1 setup first** (steps 1-5 from Quick Start above)
+
+2. **Deploy applications to generate telemetry data:**
+   ```bash
+   # Deploy test applications that send telemetry to Honeycomb
+   kubectl apply -f simple-canary.yaml
+   ```
+
+3. **Wait for data to appear in Honeycomb:**
+   - Allow 10+ minutes for telemetry ingestion and processing
+   - Verify data exists in Honeycomb UI → Query → your dataset
+
+4. **Switch to Honeycomb-backed MetricTemplates:**
+   ```bash
+   # Apply Honeycomb metric templates (uses adapter for querying)
+   kubectl apply -f honeycomb-adapter/examples/metric-templates.yaml
+   
+   # Deploy canary that uses Honeycomb metrics
+   kubectl apply -f honeycomb-adapter/examples/canary-example.yaml
+   ```
+
+5. **Verify adapter functionality:**
+   ```bash
+   # Check adapter health and Honeycomb connectivity
+   kubectl port-forward -n flagger-system svc/honeycomb-adapter 9090:9090 &
+   curl http://localhost:9090/-/ready
+   
+   # Test query translation
+   curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"podinfo\"}[10m]))"
+   ```
+
+**Important**: Approach 2 requires existing telemetry data in Honeycomb with proper service.name attributes and at least 10 minutes of data history.
+
+## Testing the Honeycomb Adapter
+
+### End-to-End Testing
+
+The adapter includes comprehensive testing capabilities to validate the complete integration:
+
+#### 1. Health Check Tests
+```bash
+# Basic health check
+curl http://localhost:9090/-/healthy
+
+# Readiness check (validates Honeycomb connectivity)
+curl http://localhost:9090/-/ready
+```
+
+#### 2. Query Translation Tests
+```bash
+# Test success rate query
+curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"podinfo\"}[10m]))"
+
+# Test error rate query  
+curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"podinfo\",code=~\"5..\"}[10m]))"
+
+# Test duration query
+curl "http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,http_request_duration_seconds{service=\"podinfo\"}[10m])"
+```
+
+#### 3. Integration Testing with Flagger
+```bash
+# Deploy a test canary that uses the Honeycomb adapter
+kubectl apply -f honeycomb-adapter/examples/canary-example.yaml
+
+# Monitor the canary deployment
+kubectl get canary test-canary -n test -w
+
+# Check Flagger logs for adapter queries
+kubectl logs -n flagger-system deployment/flagger -f | grep honeycomb
+```
+
+### Troubleshooting Tests
+
+#### Data Availability Issues
+```bash
+# Check if data exists in the expected timeframe
+curl "http://localhost:9090/api/v1/query?query=sum(http_requests_total{service=\"test\"}[1h])"
+
+# Verify service names in Honeycomb data
+curl "http://localhost:9090/api/v1/query?query=group(http_requests_total) by (service)"
+```
+
+#### Query Performance Testing
+```bash
+# Test query execution time
+time curl "http://localhost:9090/api/v1/query?query=sum(rate(http_requests_total{service=\"test\"}[10m]))"
+
+# Monitor query polling behavior in logs
+kubectl logs -n flagger-system deployment/honeycomb-adapter -f | grep "Polling attempt"
+```
+
+#### Security Testing
+```bash
+# Verify container runs as non-root
+kubectl exec -n flagger-system deployment/honeycomb-adapter -- id
+
+# Check file permissions
+kubectl exec -n flagger-system deployment/honeycomb-adapter -- ls -la /app/honeycomb-adapter
+```
+
+#### Common Adapter Issues
+
+**1. No data returned from queries**
+- Verify Honeycomb dataset contains data with required fields
+- Check service name mapping in logs
+- Ensure time windows have sufficient data (minimum 10 minutes)
+
+**2. Authentication errors**
+- Verify `HONEYCOMB_API_KEY` is correct and has query permissions
+- Check Honeycomb dataset exists and is accessible
+
+**3. Query translation failures**
+- Check adapter logs for unsupported query patterns
+- Verify PromQL syntax matches supported patterns
+
+**4. Flagger not promoting canary**
+- Ensure metric thresholds are realistic for your data
+- Check that service names match between Flagger and Honeycomb
+
+**Debug Mode:**
+```bash
+# Enable debug logging
+kubectl set env deployment/honeycomb-adapter LOG_LEVEL=debug -n flagger-system
+
+# View detailed logs
+kubectl logs -n flagger-system deployment/honeycomb-adapter -f
+```
+
+### Expected Test Results
+
+**Successful Health Check:**
+```json
+{"status": "healthy"}
+```
+
+**Successful Query Response:**
+```json
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {},
+        "value": [1642678800, "42.5"]
+      }
+    ]
+  }
+}
+```
+
+**Common Test Failures:**
+- `502 Bad Gateway`: Adapter not deployed or unhealthy
+- `Query timeout`: Data not available in specified time window
+- `Authentication failed`: Invalid Honeycomb API key
+- `No data found`: Service name mismatch or insufficient telemetry
+
+### Adapter Limitations
+
+- **Limited PromQL support**: Only common Flagger query patterns are supported
+- **Query performance**: Complex aggregations may be slower than native Prometheus
+- **Time granularity**: Limited by Honeycomb's query API capabilities
+- **No alerting**: Adapter only supports query operations
+- **Minimum time windows**: Uses 10-minute minimum windows for data availability
 
 ## Detailed Installation Steps
 
@@ -445,6 +872,127 @@ During a canary deployment, Flagger will analyze these key metrics:
 **4. Request Rate:**
 - `envoy_cluster_upstream_rq_total` - Total requests per second
 - Flagger checks: Must have minimum traffic (≥ 1 req/s by default)
+
+## Verifying Successful Canary Deployments
+
+After a canary completes, you can verify the version promotion was successful using multiple methods:
+
+### 1. Application Response Verification
+The most direct way to confirm the new version is active:
+```bash
+# Port forward to the application
+kubectl port-forward -n test svc/podinfo 9898:9898 &
+
+# Check the version in the response
+curl -s http://localhost:9898/ | jq '.version'
+# Example output: "6.5.4" (showing new promoted version)
+```
+
+### 2. Canary Resource Status
+Check the canary deployment status and history:
+```bash
+# Check current canary status
+kubectl get canary podinfo-canary -n test
+# Should show: STATUS=Succeeded
+
+# Review deployment events and progression
+kubectl describe canary podinfo-canary -n test | grep -A10 "Events:"
+# Look for progression: Advance canary weight 10 → 20 → 30 → ... → Succeeded
+```
+
+### 3. Deployment Image Verification
+Verify both deployments are using the new image:
+```bash
+# Check primary deployment image (this serves live traffic)
+kubectl get deployment podinfo-primary -n test -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+# Check original deployment image (should match primary after promotion)
+kubectl get deployment podinfo -n test -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+# Both should show the same new version, e.g.: ghcr.io/stefanprodan/podinfo:6.5.4
+```
+
+### 4. ReplicaSet History Analysis
+View the complete deployment history to see version progression:
+```bash
+# List all ReplicaSets showing image versions
+kubectl get rs -n test -o wide | grep podinfo
+
+# Example output shows version progression:
+# podinfo-545dccc488     0  0  0  6m   podinfod  ghcr.io/stefanprodan/podinfo:6.5.4  (promoted)
+# podinfo-545fc47c4b     0  0  0  7m   podinfod  ghcr.io/stefanprodan/podinfo:6.0.3  (old)
+# podinfo-primary-xxx    1  1  1  3m   podinfod  ghcr.io/stefanprodan/podinfo:6.5.4  (active)
+```
+
+### 5. Flagger Controller Logs
+Review the promotion decision logs:
+```bash
+# Check recent Flagger logs for promotion events
+kubectl logs -n flagger-system deployment/flagger --tail=20 | grep -E "(Advance|Promoting|Routing|Succeeded)"
+
+# Example successful progression logs:
+# "Advance podinfo-canary.test canary weight 10"
+# "Advance podinfo-canary.test canary weight 20" 
+# ...
+# "Routing all traffic to primary"
+```
+
+### 6. Pod Labels and Metadata
+Verify active pods are running the new version:
+```bash
+# Check current running pods
+kubectl get pods -n test -l app=podinfo-primary -o wide
+
+# Check pod image and creation time
+kubectl describe pod -n test -l app=podinfo-primary | grep -E "(Image:|Created:)"
+```
+
+### 7. Honeycomb Dataset Verification (If Configured)
+If you have telemetry forwarding to Honeycomb:
+
+1. **Access Honeycomb UI** → Navigate to your `podinfo-service` dataset
+2. **Query for deployment events**: 
+   ```
+   COUNT WHERE (service.version = "6.5.4") GROUP BY service.version
+   ```
+3. **Check service version timeline**: Look for the transition from old to new version around the deployment time
+4. **Verify telemetry data**: Confirm both versions show up in traces during the canary window
+
+### Troubleshooting Failed Promotions
+If a canary fails (`STATUS=Failed`), investigate using:
+
+```bash
+# Check why it failed
+kubectl describe canary podinfo-canary -n test | grep -A5 "Events:"
+
+# Common failure reasons:
+# - "Metric query failed" → Check metric templates and Prometheus connectivity
+# - "canary deployment not ready" → Check pod status and image availability  
+# - "Canary failed! Rolling back" → Metrics didn't meet thresholds
+
+# Check pod status for image pull issues
+kubectl get pods -n test
+kubectl describe pod <failing-pod-name> -n test
+
+# Verify metric templates are working
+kubectl get metrictemplates -n flagger-system
+```
+
+### Expected Timeline
+A typical successful canary deployment follows this pattern:
+- **0-30s**: Initializing (creating primary deployment)
+- **30-60s**: Progressing (10% traffic to canary)
+- **1-4min**: Progressive traffic increase (20% → 30% → 40% → 50%)
+- **4-5min**: Promoting (routing 100% traffic to primary)
+- **5-6min**: Succeeded (canary pods terminated, promotion complete)
+
+**Key Verification Points:**
+✅ Application responds with new version  
+✅ Canary status shows `Succeeded`  
+✅ Both deployments use new image  
+✅ ReplicaSet history shows progression  
+✅ Flagger logs show successful advancement  
+✅ Honeycomb data reflects new version (if configured)
 
 ### Canary Deployment Phases:
 

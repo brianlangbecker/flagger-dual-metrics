@@ -20,7 +20,7 @@ spec:
       - name: HONEYCOMB_API_KEY
         valueFrom:
           secretKeyRef:
-            name: honeycomb-secret
+            name: honeycomb-otel-secret
             key: api-key
   nodejs:
     image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:latest
@@ -30,7 +30,7 @@ spec:
       - name: HONEYCOMB_API_KEY
         valueFrom:
           secretKeyRef:
-            name: honeycomb-secret
+            name: honeycomb-otel-secret
             key: api-key
   dotnet:
     image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-dotnet:latest
@@ -40,7 +40,7 @@ spec:
       - name: HONEYCOMB_API_KEY
         valueFrom:
           secretKeyRef:
-            name: honeycomb-secret
+            name: honeycomb-otel-secret
             key: api-key
   python:
     image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
@@ -50,7 +50,7 @@ spec:
       - name: HONEYCOMB_API_KEY
         valueFrom:
           secretKeyRef:
-            name: honeycomb-secret
+            name: honeycomb-otel-secret
             key: api-key
 ---
 # Note: You'll also need the OpenTelemetry Operator installed

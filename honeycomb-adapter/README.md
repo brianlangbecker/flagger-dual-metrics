@@ -45,7 +45,36 @@ metadata:
 ### Honeycomb Setup
 - Honeycomb account with API access
 - Dataset configured to receive telemetry data
-- API key with query permissions
+- **Query API key** with read permissions (not an ingestion key)
+
+## Prerequisites Setup
+
+### Step 1: Create Kubernetes namespace
+```bash
+kubectl create namespace flagger-system
+```
+
+### Step 2: Create Honeycomb query secret
+```bash
+# Create query secret (for reading telemetry data)
+kubectl create secret generic honeycomb-query-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
+  --namespace=flagger-system
+```
+
+### Step 3: Verify secret
+```bash
+# Check that the secret exists
+kubectl get secret honeycomb-query-secret -n flagger-system
+
+# Verify secret contents (key will be base64 encoded)
+kubectl get secret honeycomb-query-secret -n flagger-system -o yaml
+```
+
+**Where to get your query key:**
+- Go to Honeycomb → Environment Settings → API Keys
+- Create a new key with "Read Events" permissions
+- **Important:** Do not use an ingestion key - the adapter needs read permissions only
 
 ## Quick Start
 
@@ -77,14 +106,18 @@ make docker-build
 kubectl apply -f deployment/
 ```
 
-### 2. Configure Secrets
+### 2. Configure Secrets (if not already done)
+
+If you haven't already created the secret in the Prerequisites Setup section:
 
 ```bash
-# Create Honeycomb API secret
-kubectl create secret generic honeycomb-secret \
-  --from-literal=api-key=YOUR_HONEYCOMB_API_KEY \
+# Create Honeycomb query API secret (requires read permissions)
+kubectl create secret generic honeycomb-query-secret \
+  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
   --namespace=flagger-system
 ```
+
+**Important:** Use a **query key**, not an ingestion key. The adapter needs read permissions to query existing telemetry data in Honeycomb.
 
 ### 3. Create MetricTemplates
 
@@ -140,11 +173,13 @@ sum(rate(http_requests_total{service="my-app"}[5m]))
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `HONEYCOMB_API_KEY` | Honeycomb API key | - | Yes |
+| `HONEYCOMB_API_KEY` | Honeycomb **query** API key | - | Yes |
 | `HONEYCOMB_DATASET` | Target dataset name | `flagger-metrics` | No |
 | `HONEYCOMB_BASE_URL` | Honeycomb API URL | `https://api.honeycomb.io` | No |
 | `LOG_LEVEL` | Logging level | `info` | No |
 | `PORT` | Server port | `9090` | No |
+
+**Note:** The `HONEYCOMB_API_KEY` must be a **query key** with read permissions, not an ingestion key.
 
 ### Service Name Mapping
 
@@ -232,8 +267,9 @@ curl "http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(
 - Ensure time windows have sufficient data
 
 **2. Authentication errors**
-- Verify `HONEYCOMB_API_KEY` is correct and has query permissions
+- Verify `HONEYCOMB_API_KEY` is a **query key** (not ingestion key) with read permissions
 - Check Honeycomb dataset exists and is accessible
+- Confirm the query key has access to the specific dataset being queried
 
 **3. Query translation failures**
 - Check adapter logs for unsupported query patterns

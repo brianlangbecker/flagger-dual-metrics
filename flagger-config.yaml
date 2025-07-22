@@ -18,7 +18,7 @@ data:
             type: honeycomb
             address: https://api.honeycomb.io
             secretRef:
-              name: honeycomb-secret
+              name: honeycomb-query-secret
               key: api-key
           query: |
             COUNT(spans) WHERE status_code < 400 / COUNT(spans) * 100
@@ -36,7 +36,7 @@ data:
             type: honeycomb
             address: https://api.honeycomb.io
             secretRef:
-              name: honeycomb-secret
+              name: honeycomb-query-secret
               key: api-key
           query: |
             P95(duration_ms) WHERE service_name = "{{.Name}}"
