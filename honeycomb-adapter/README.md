@@ -45,7 +45,7 @@ metadata:
 ### Honeycomb Setup
 - Honeycomb account with API access
 - Dataset configured to receive telemetry data
-- **Query API key** with read permissions (not an ingestion key)
+- **Configuration API key** with "Run queries" permission (not an ingest key)
 
 ## Prerequisites Setup
 
@@ -54,11 +54,11 @@ metadata:
 kubectl create namespace flagger-system
 ```
 
-### Step 2: Create Honeycomb query secret
+### Step 2: Create Honeycomb configuration secret
 ```bash
-# Create query secret (for reading telemetry data)
+# Create configuration secret (for reading telemetry data)
 kubectl create secret generic honeycomb-query-secret \
-  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
+  --from-literal=api-key=YOUR_HONEYCOMB_CONFIGURATION_KEY \
   --namespace=flagger-system
 ```
 
@@ -71,10 +71,11 @@ kubectl get secret honeycomb-query-secret -n flagger-system
 kubectl get secret honeycomb-query-secret -n flagger-system -o yaml
 ```
 
-**Where to get your query key:**
+**Where to get your Configuration API key:**
 - Go to Honeycomb → Environment Settings → API Keys
-- Create a new key with "Read Events" permissions
-- **Important:** Do not use an ingestion key - the adapter needs read permissions only
+- Create a new **Configuration API key** with "Run queries" permission
+- **Important:** Do not use an Ingest key - the adapter needs query permissions only
+- **Security:** Configuration keys can have granular permissions - only enable "Run queries" for this use case
 
 ## Quick Start
 
@@ -111,13 +112,13 @@ kubectl apply -f deployment/
 If you haven't already created the secret in the Prerequisites Setup section:
 
 ```bash
-# Create Honeycomb query API secret (requires read permissions)
+# Create Honeycomb Configuration API secret (requires "Run queries" permission)
 kubectl create secret generic honeycomb-query-secret \
-  --from-literal=api-key=YOUR_HONEYCOMB_QUERY_KEY \
+  --from-literal=api-key=YOUR_HONEYCOMB_CONFIGURATION_KEY \
   --namespace=flagger-system
 ```
 
-**Important:** Use a **query key**, not an ingestion key. The adapter needs read permissions to query existing telemetry data in Honeycomb.
+**Important:** Use a **Configuration API key** with "Run queries" permission, not an Ingest key. The adapter needs query permissions to read existing telemetry data in Honeycomb.
 
 ### 3. Create MetricTemplates
 
@@ -173,13 +174,13 @@ sum(rate(http_requests_total{service="my-app"}[5m]))
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `HONEYCOMB_API_KEY` | Honeycomb **query** API key | - | Yes |
+| `HONEYCOMB_API_KEY` | Honeycomb **Configuration API key** | - | Yes |
 | `HONEYCOMB_DATASET` | Target dataset name | `flagger-metrics` | No |
 | `HONEYCOMB_BASE_URL` | Honeycomb API URL | `https://api.honeycomb.io` | No |
 | `LOG_LEVEL` | Logging level | `info` | No |
 | `PORT` | Server port | `9090` | No |
 
-**Note:** The `HONEYCOMB_API_KEY` must be a **query key** with read permissions, not an ingestion key.
+**Note:** The `HONEYCOMB_API_KEY` must be a **Configuration API key** with "Run queries" permission, not an Ingest key.
 
 ### Service Name Mapping
 
@@ -267,9 +268,10 @@ curl "http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(
 - Ensure time windows have sufficient data
 
 **2. Authentication errors**
-- Verify `HONEYCOMB_API_KEY` is a **query key** (not ingestion key) with read permissions
+- Verify `HONEYCOMB_API_KEY` is a **Configuration API key** (not Ingest key) with "Run queries" permission
 - Check Honeycomb dataset exists and is accessible
-- Confirm the query key has access to the specific dataset being queried
+- Confirm the Configuration key has access to the specific dataset being queried
+- **Security:** Ensure only minimal permissions are granted - just "Run queries"
 
 **3. Query translation failures**
 - Check adapter logs for unsupported query patterns

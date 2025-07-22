@@ -84,32 +84,32 @@ Flagger works with Honeycomb through two approaches:
 │   (Canary)      │                           │   (Primary      │
 └─────────────────┘                           │    Metrics)     │
                                               └─────────────────┘
-                                                        │
+                                                        ▲
                                                         │ API Queries
-                                                        ▼
+                                                        │
                                               ┌─────────────────┐
                                               │ Honeycomb-      │
                                               │ Prometheus      │
-                                              │ Adapter         │
-                                              │                 │
-                                              │ • Query Polling │
-                                              │ • 3min Windows  │
-                                              │ • Secure Runtime│
-                                              └─────────────────┘
-                                                        │
-                                                        │ Prometheus API
-                                                        ▼
-                                              ┌─────────────────┐
-                                              │     Flagger     │
-                                              │                 │
-                                              │ → Queries       │
-                                              │   Adapter       │
-                                              │ → Validates     │
-                                              │   Honeycomb     │
-                                              │   Metrics       │
-                                              │ → Promotes      │
-                                              │   Canary        │
-                                              └─────────────────┘
+                     PromQL Queries           │ Adapter         │
+           ┌─────────────────────────────────►│                 │
+           │                                 │ • Query Polling │
+           │                                 │ • 3min Windows  │
+           │                                 │ • Secure Runtime│
+           │                                 └─────────────────┘
+           │
+           │ http://honeycomb-adapter:9090/api/v1/query
+           │
+┌─────────────────┐
+│     Flagger     │
+│                 │
+│ → Queries       │
+│   Adapter       │
+│ → Validates     │
+│   Honeycomb     │
+│   Metrics       │
+│ → Promotes      │
+│   Canary        │
+└─────────────────┘
 ```
 
 ## Provider Definitions
@@ -157,6 +157,58 @@ The observability providers are configured in the following locations:
 | `install-flagger.sh` | Script to install Flagger controller |
 | `kind-config.yaml` | Configuration for Kind (Kubernetes in Docker) clusters |
 | `honeycomb-adapter/` | Honeycomb-Prometheus adapter for direct querying |
+
+## Documentation Index
+
+This project includes comprehensive documentation for different aspects of the Flagger-Honeycomb integration:
+
+### 📚 Main Documentation
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[README.md](README.md)** | Complete setup guide with both approaches | All users |
+| **[APPROACH2-QUICKSTART.md](APPROACH2-QUICKSTART.md)** | Step-by-step guide for direct Honeycomb querying | Advanced users |
+| **[honeycomb-adapter/README.md](honeycomb-adapter/README.md)** | Honeycomb-Prometheus adapter documentation | Developers/DevOps |
+
+### 🔑 Configuration and Setup
+
+| Document | Description | Purpose |
+|----------|-------------|---------|
+| **[HONEYCOMB_KEYS.md](HONEYCOMB_KEYS.md)** | Honeycomb API key management guide | Key setup |
+| **[END_TO_END_TESTING.md](END_TO_END_TESTING.md)** | Complete testing procedures and validation | Testing/QA |
+
+### 🏗️ Architecture Approaches
+
+**Approach 1: Metrics Forwarding (Default)**
+- Uses Prometheus as primary metrics source
+- Forwards metrics to Honeycomb via OpenTelemetry
+- Best for: Getting started, hybrid metrics
+
+**Approach 2: Direct Honeycomb Querying (Advanced)**
+- Uses Honeycomb as primary metrics source
+- Queries Honeycomb directly via adapter
+- Best for: Honeycomb-native workflows, production scale
+
+### 🛠️ Key Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Honeycomb Adapter** | `honeycomb-adapter/` | Translate PromQL to Honeycomb queries |
+| **Metric Templates** | `*-metrics.yaml` | Define how Flagger queries metrics |
+| **Canary Configurations** | `*-canary.yaml` | Example canary deployment configs |
+| **Installation Scripts** | `install-*.sh` | Automated component installation |
+
+### 📖 Quick Navigation
+
+- **New to Flagger + Honeycomb?** → Start with [README.md](README.md) Quick Start
+- **Want direct Honeycomb querying?** → Follow [APPROACH2-QUICKSTART.md](APPROACH2-QUICKSTART.md)
+- **Need API key setup?** → See [HONEYCOMB_KEYS.md](HONEYCOMB_KEYS.md)
+- **Adapter not working?** → Check [honeycomb-adapter/README.md](honeycomb-adapter/README.md)
+- **Want to test everything?** → Use [END_TO_END_TESTING.md](END_TO_END_TESTING.md)
+
+### 🔧 File Purpose Reference
+
+For specific file purposes, see the [Files Overview](#files-overview) table above.
 
 ## Prerequisites
 
