@@ -18,6 +18,7 @@ type HoneycombAdapter struct {
 	honeycombDataset string
 	honeycombBaseURL string
 	logLevel         string
+	queryTimeWindow  time.Duration
 }
 
 type PrometheusResponse struct {
@@ -61,11 +62,20 @@ type TimeRange struct {
 }
 
 func main() {
+	// Parse query time window from environment variable, default to 3 minutes
+	queryTimeWindowStr := getEnv("QUERY_TIME_WINDOW", "3m")
+	queryTimeWindow, err := time.ParseDuration(queryTimeWindowStr)
+	if err != nil {
+		log.Printf("❌ Invalid QUERY_TIME_WINDOW value '%s', using default 3m: %v", queryTimeWindowStr, err)
+		queryTimeWindow = 3 * time.Minute
+	}
+
 	adapter := &HoneycombAdapter{
 		honeycombAPIKey:  getEnv("HONEYCOMB_API_KEY", ""),
 		honeycombDataset: getEnv("HONEYCOMB_DATASET", ""),
 		honeycombBaseURL: getEnv("HONEYCOMB_BASE_URL", "https://api.honeycomb.io"),
 		logLevel:         getEnv("LOG_LEVEL", "info"),
+		queryTimeWindow:  queryTimeWindow,
 	}
 
 	if adapter.honeycombAPIKey == "" {
@@ -74,6 +84,7 @@ func main() {
 
 	log.Printf("🔑 API Key: %s", adapter.honeycombAPIKey[:8]+"...") // Show first 8 chars
 	log.Printf("🔧 Log Level: %s", adapter.logLevel)
+	log.Printf("⏱️  Query Time Window: %s", adapter.queryTimeWindow)
 
 	http.HandleFunc("/api/v1/query", adapter.handleQuery)
 	http.HandleFunc("/api/v1/query_range", adapter.handleQueryRange)
@@ -335,7 +346,7 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 	re := regexp.MustCompile(`\[(\d+)([smhd])\]`)
 	matches := re.FindStringSubmatch(promQL)
 	
-	minWindow := 3 * time.Minute // Optimized: fast for Flagger, safe for Honeycomb ingestion
+	minWindow := h.queryTimeWindow // Use configurable query time window
 	
 	if len(matches) >= 3 {
 		value, err := strconv.Atoi(matches[1])
@@ -360,7 +371,7 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 		
 		// Use adaptive windowing: fast for Flagger, safe for Honeycomb
 		if requestedWindow < minWindow {
-			log.Printf("📊 Requested window %v optimized to %v for Flagger responsiveness + Honeycomb ingestion", requestedWindow, minWindow)
+			log.Printf("📊 Requested window %v optimized to %v (configured minimum)", requestedWindow, minWindow)
 			return minWindow
 		}
 		

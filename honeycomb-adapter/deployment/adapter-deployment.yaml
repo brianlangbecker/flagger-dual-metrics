@@ -33,6 +33,8 @@ spec:
           value: "https://api.honeycomb.io"
         - name: LOG_LEVEL
           value: "info"
+        - name: QUERY_TIME_WINDOW
+          value: "3m"
         - name: PORT
           value: "9090"
         resources:

@@ -177,10 +177,41 @@ sum(rate(http_requests_total{service="my-app"}[5m]))
 | `HONEYCOMB_API_KEY` | Honeycomb **Configuration API key** | - | Yes |
 | `HONEYCOMB_DATASET` | Target dataset name | `flagger-metrics` | No |
 | `HONEYCOMB_BASE_URL` | Honeycomb API URL | `https://api.honeycomb.io` | No |
+| `QUERY_TIME_WINDOW` | Minimum query time window | `3m` | No |
 | `LOG_LEVEL` | Logging level | `info` | No |
 | `PORT` | Server port | `9090` | No |
 
 **Note:** The `HONEYCOMB_API_KEY` must be a **Configuration API key** with "Run queries" permission, not an Ingest key.
+
+### Query Time Window Configuration
+
+The `QUERY_TIME_WINDOW` environment variable controls the minimum time window for Honeycomb queries. This setting is important for balancing query performance with data freshness.
+
+**Format:** Go duration format (e.g., `3m`, `5m`, `30s`, `1h`)
+
+**Behavior:**
+- If a PromQL query specifies a time window (e.g., `[5m]`), that window is used if it's >= the configured minimum
+- If a PromQL query specifies a smaller window (e.g., `[30s]` when minimum is `3m`), the minimum is enforced
+- If no time window is specified in the query, the configured minimum is used
+
+**Examples:**
+```bash
+# Set 5-minute minimum window
+QUERY_TIME_WINDOW=5m
+
+# Set 30-second minimum (faster but may miss recent data)
+QUERY_TIME_WINDOW=30s
+
+# Set 1-hour minimum (slower but more comprehensive)
+QUERY_TIME_WINDOW=1h
+```
+
+**Considerations:**
+- **Shorter windows (< 3m)**: Faster queries but may miss recent data due to Honeycomb ingestion delays
+- **Longer windows (> 5m)**: More comprehensive data but slower canary analysis cycles
+- **Default (3m)**: Balanced approach optimized for Flagger's typical canary deployment timings
+
+**Invalid values** (e.g., `invalid-duration`) will log a warning and default to `3m`.
 
 ### Service Name Mapping
 
@@ -210,6 +241,7 @@ go build -o honeycomb-adapter .
 # Run locally
 export HONEYCOMB_API_KEY=your-key
 export HONEYCOMB_DATASET=your-dataset
+export QUERY_TIME_WINDOW=3m  # Optional: set custom time window
 ./honeycomb-adapter
 ```
 
@@ -236,6 +268,7 @@ docker build -t honeycomb-adapter:latest .
 docker run -p 9090:9090 \
   -e HONEYCOMB_API_KEY=your-key \
   -e HONEYCOMB_DATASET=your-dataset \
+  -e QUERY_TIME_WINDOW=3m \
   honeycomb-adapter:latest
 ```
 
@@ -280,6 +313,14 @@ curl "http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(
 **4. Flagger not promoting canary**
 - Ensure metric thresholds are realistic for your data
 - Check that service names match between Flagger and Honeycomb
+
+**5. Slow canary analysis cycles**
+- Consider reducing `QUERY_TIME_WINDOW` (e.g., `1m`) for faster analysis
+- Balance between speed and data completeness based on your ingestion patterns
+
+**6. Missing recent data in queries**
+- Increase `QUERY_TIME_WINDOW` (e.g., `5m`) to account for ingestion delays
+- Check Honeycomb ingestion latency for your data pipeline
 
 ### Debug Mode
 

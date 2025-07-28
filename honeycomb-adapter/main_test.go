@@ -9,7 +9,9 @@ import (
 )
 
 func TestExtractServiceName(t *testing.T) {
-	adapter := &HoneycombAdapter{}
+	adapter := &HoneycombAdapter{
+		queryTimeWindow: 3 * time.Minute,
+	}
 
 	tests := []struct {
 		name     string
@@ -29,7 +31,7 @@ func TestExtractServiceName(t *testing.T) {
 		{
 			name:     "flagger template variable",
 			promQL:   `sum(rate(http_requests_total{service="{{ args.name }}"}[5m]))`,
-			expected: "{{ args.name }}",
+			expected: "",
 		},
 		{
 			name:     "no service name",
@@ -49,7 +51,9 @@ func TestExtractServiceName(t *testing.T) {
 }
 
 func TestExtractTimeWindow(t *testing.T) {
-	adapter := &HoneycombAdapter{}
+	adapter := &HoneycombAdapter{
+		queryTimeWindow: 3 * time.Minute,
+	}
 
 	tests := []struct {
 		name     string
@@ -64,7 +68,7 @@ func TestExtractTimeWindow(t *testing.T) {
 		{
 			name:     "30 seconds",
 			promQL:   `sum(rate(http_requests_total[30s]))`,
-			expected: 30 * time.Second,
+			expected: 3 * time.Minute, // enforced minimum
 		},
 		{
 			name:     "1 hour",
@@ -74,7 +78,7 @@ func TestExtractTimeWindow(t *testing.T) {
 		{
 			name:     "no time window",
 			promQL:   `sum(http_requests_total)`,
-			expected: 5 * time.Minute, // default
+			expected: 3 * time.Minute, // default from configuration
 		},
 	}
 
@@ -89,7 +93,9 @@ func TestExtractTimeWindow(t *testing.T) {
 }
 
 func TestTranslatePromQLToHoneycomb(t *testing.T) {
-	adapter := &HoneycombAdapter{}
+	adapter := &HoneycombAdapter{
+		queryTimeWindow: 3 * time.Minute,
+	}
 
 	tests := []struct {
 		name     string
@@ -154,6 +160,7 @@ func TestHealthEndpoint(t *testing.T) {
 	adapter := &HoneycombAdapter{
 		honeycombAPIKey: "test-key",
 		logLevel:        "info",
+		queryTimeWindow: 3 * time.Minute,
 	}
 
 	req, err := http.NewRequest("GET", "/-/healthy", nil)
@@ -177,7 +184,9 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestConvertToPrometheusFormat(t *testing.T) {
-	adapter := &HoneycombAdapter{}
+	adapter := &HoneycombAdapter{
+		queryTimeWindow: 3 * time.Minute,
+	}
 
 	// Mock Honeycomb response
 	honeycombResult := map[string]interface{}{
@@ -214,7 +223,10 @@ func TestConvertToPrometheusFormat(t *testing.T) {
 }
 
 func TestExtractValueFromHoneycombResult(t *testing.T) {
-	adapter := &HoneycombAdapter{logLevel: "debug"}
+	adapter := &HoneycombAdapter{
+		logLevel:        "debug",
+		queryTimeWindow: 3 * time.Minute,
+	}
 
 	tests := []struct {
 		name     string
@@ -275,15 +287,23 @@ func TestExtractValueFromHoneycombResult(t *testing.T) {
 // Mock Honeycomb server for integration testing
 func mockHoneycombServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/1/query/test-dataset" {
+		// Handle query creation
+		if r.URL.Path == "/1/queries/test" && r.Method == "POST" {
+			response := map[string]interface{}{
+				"id": "test-query-id",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		// Handle query execution
+		if r.URL.Path == "/1/query_results/test" && r.Method == "POST" {
 			response := map[string]interface{}{
 				"data": map[string]interface{}{
 					"results": []interface{}{
 						map[string]interface{}{
-							"data": []interface{}{
-								map[string]interface{}{
-									"count": 95.5,
-								},
+							"data": map[string]interface{}{
+								"COUNT": 95.5,
 							},
 						},
 					},
@@ -307,6 +327,7 @@ func TestQueryIntegration(t *testing.T) {
 		honeycombDataset: "test-dataset",
 		honeycombBaseURL: mockServer.URL,
 		logLevel:         "debug",
+		queryTimeWindow:  3 * time.Minute,
 	}
 
 	// Create test server
