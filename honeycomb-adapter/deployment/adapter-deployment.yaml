@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: adapter
-        image: honeycomb-adapter:latest
+        image: honeycomb-adapter:instrumented
         imagePullPolicy: Never
         ports:
         - containerPort: 9090
@@ -37,6 +37,14 @@ spec:
           value: "3m"
         - name: PORT
           value: "9090"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "https://api.honeycomb.io:443"
+        - name: OTEL_EXPORTER_OTLP_HEADERS
+          value: "x-honeycomb-team=CbUVTd7D7rrdzvcV1FOu8B"
+        - name: OTEL_EXPORTER_OTLP_METRICS_HEADERS
+          value: "x-honeycomb-team=CbUVTd7D7rrdzvcV1FOu8B,x-honeycomb-dataset=honeycomb-flagger-adapter-metrics"
+        - name: OTEL_SERVICE_NAME
+          value: "honeycomb-flagger-adapter"
         resources:
           requests:
             cpu: 100m

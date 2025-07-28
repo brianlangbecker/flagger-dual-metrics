@@ -10,6 +10,7 @@ Flagger natively supports Prometheus but not Honeycomb. This adapter bridges tha
 2. **Translating PromQL queries** to Honeycomb Query API calls
 3. **Converting Honeycomb responses** back to Prometheus format
 4. **Enabling Honeycomb-based canary analysis** with zero Flagger modifications
+5. **Comprehensive observability** of the adapter itself with OpenTelemetry instrumentation
 
 ## Architecture
 
@@ -180,8 +181,42 @@ sum(rate(http_requests_total{service="my-app"}[5m]))
 | `QUERY_TIME_WINDOW` | Minimum query time window | `3m` | No |
 | `LOG_LEVEL` | Logging level | `info` | No |
 | `PORT` | Server port | `9090` | No |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry endpoint | `https://api.honeycomb.io:443` | No |
+| `OTEL_EXPORTER_OTLP_HEADERS` | OpenTelemetry headers | - | No |
+| `OTEL_SERVICE_NAME` | Service name for telemetry | `honeycomb-flagger-adapter` | No |
 
 **Note:** The `HONEYCOMB_API_KEY` must be a **Configuration API key** with "Run queries" permission, not an Ingest key.
+
+### Observability and Instrumentation
+
+The adapter includes comprehensive OpenTelemetry instrumentation that provides visibility into its own operations:
+
+#### Traces
+- **Query processing traces**: End-to-end visibility of PromQL → Honeycomb query translation
+- **HTTP request traces**: Detailed spans for all API calls to Honeycomb
+- **Error tracking**: Automatic error capture and attribution
+
+#### Metrics
+- **Query counters**: Total queries processed by service and status
+- **Query duration**: Histogram of query processing times
+- **Window enforcements**: Count of queries where time windows were adjusted
+- **Error rates**: Failed query counts by service and error type
+
+#### Service Identity
+- **Service name**: `honeycomb-flagger-adapter` (configurable via `OTEL_SERVICE_NAME`)
+- **Metrics dataset**: `honeycomb-flagger-adapter-metrics` (separate from application data)
+
+#### Configuration
+The adapter sends its own telemetry to Honeycomb using OTLP:
+```yaml
+env:
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: "https://api.honeycomb.io:443"
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  value: "x-honeycomb-team=YOUR_API_KEY"
+- name: OTEL_EXPORTER_OTLP_METRICS_HEADERS
+  value: "x-honeycomb-team=YOUR_API_KEY,x-honeycomb-dataset=honeycomb-flagger-adapter-metrics"
+```
 
 ### Query Time Window Configuration
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+	
 )
 
 type HoneycombAdapter struct {
@@ -19,6 +33,14 @@ type HoneycombAdapter struct {
 	honeycombBaseURL string
 	logLevel         string
 	queryTimeWindow  time.Duration
+	
+	// OpenTelemetry instrumentation
+	tracer              trace.Tracer
+	meter               metric.Meter
+	queryCounter        metric.Int64Counter
+	queryDuration       metric.Float64Histogram
+	windowEnforcements  metric.Int64Counter
+	honeycombErrors     metric.Int64Counter
 }
 
 type PrometheusResponse struct {
@@ -61,7 +83,102 @@ type TimeRange struct {
 	EndTime   int64 `json:"end_time"`
 }
 
+// initTelemetry initializes OpenTelemetry with Honeycomb export using environment variables
+func initTelemetry(ctx context.Context, serviceName, honeycombAPIKey string) (func(), error) {
+	// Create resource with service information
+	res, err := sdkresource.New(ctx,
+		sdkresource.WithAttributes(
+			attribute.String("service.name", serviceName),
+			attribute.String("service.version", "1.0.0"),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
+	// Configure trace exporter to Honeycomb using environment variables
+	traceExporter, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+	}
+
+	// Configure trace provider
+	traceProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(traceProvider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	// Configure metric exporter to Honeycomb using environment variables
+	metricExporter, err := otlpmetrichttp.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
+	}
+
+	// Configure metric provider
+	metricProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter,
+			sdkmetric.WithInterval(10*time.Second))),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(metricProvider)
+
+	// Return cleanup function
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down tracer provider: %v", err)
+		}
+		if err := metricProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down metric provider: %v", err)
+		}
+	}, nil
+}
+
+// initializeMetrics initializes custom metrics for the adapter
+func (h *HoneycombAdapter) initializeMetrics() error {
+	var err error
+	
+	h.queryCounter, err = h.meter.Int64Counter(
+		"honeycomb_adapter_queries_total",
+		metric.WithDescription("Total number of queries processed by the adapter"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create query counter: %w", err)
+	}
+
+	h.queryDuration, err = h.meter.Float64Histogram(
+		"honeycomb_adapter_query_duration_seconds",
+		metric.WithDescription("Duration of query processing in seconds"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create query duration histogram: %w", err)
+	}
+
+	h.windowEnforcements, err = h.meter.Int64Counter(
+		"honeycomb_adapter_window_enforcements_total",
+		metric.WithDescription("Total number of query window enforcements"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create window enforcements counter: %w", err)
+	}
+
+	h.honeycombErrors, err = h.meter.Int64Counter(
+		"honeycomb_adapter_honeycomb_errors_total",
+		metric.WithDescription("Total number of Honeycomb API errors"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create honeycomb errors counter: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
+	ctx := context.Background()
+	
 	// Parse query time window from environment variable, default to 3 minutes
 	queryTimeWindowStr := getEnv("QUERY_TIME_WINDOW", "3m")
 	queryTimeWindow, err := time.ParseDuration(queryTimeWindowStr)
@@ -70,24 +187,45 @@ func main() {
 		queryTimeWindow = 3 * time.Minute
 	}
 
+	honeycombAPIKey := getEnv("HONEYCOMB_API_KEY", "")
+	if honeycombAPIKey == "" {
+		log.Fatal("HONEYCOMB_API_KEY environment variable is required")
+	}
+
+	// Initialize OpenTelemetry
+	cleanup, err := initTelemetry(ctx, "honeycomb-adapter", honeycombAPIKey)
+	if err != nil {
+		log.Fatalf("Failed to initialize telemetry: %v", err)
+	}
+	defer cleanup()
+
+	// Initialize tracer and meter
+	tracer := otel.Tracer("honeycomb-adapter")
+	meter := otel.Meter("honeycomb-adapter")
+
 	adapter := &HoneycombAdapter{
-		honeycombAPIKey:  getEnv("HONEYCOMB_API_KEY", ""),
+		honeycombAPIKey:  honeycombAPIKey,
 		honeycombDataset: getEnv("HONEYCOMB_DATASET", ""),
 		honeycombBaseURL: getEnv("HONEYCOMB_BASE_URL", "https://api.honeycomb.io"),
 		logLevel:         getEnv("LOG_LEVEL", "info"),
 		queryTimeWindow:  queryTimeWindow,
+		tracer:           tracer,
+		meter:            meter,
 	}
 
-	if adapter.honeycombAPIKey == "" {
-		log.Fatal("HONEYCOMB_API_KEY environment variable is required")
+	// Initialize custom metrics
+	if err := adapter.initializeMetrics(); err != nil {
+		log.Fatalf("Failed to initialize metrics: %v", err)
 	}
 
 	log.Printf("🔑 API Key: %s", adapter.honeycombAPIKey[:8]+"...") // Show first 8 chars
 	log.Printf("🔧 Log Level: %s", adapter.logLevel)
 	log.Printf("⏱️  Query Time Window: %s", adapter.queryTimeWindow)
+	log.Printf("📊 OpenTelemetry: Initialized with traces and metrics")
 
-	http.HandleFunc("/api/v1/query", adapter.handleQuery)
-	http.HandleFunc("/api/v1/query_range", adapter.handleQueryRange)
+	// Set up HTTP handlers with OpenTelemetry instrumentation
+	http.Handle("/api/v1/query", otelhttp.NewHandler(http.HandlerFunc(adapter.handleQuery), "query"))
+	http.Handle("/api/v1/query_range", otelhttp.NewHandler(http.HandlerFunc(adapter.handleQueryRange), "query_range"))
 	http.HandleFunc("/-/healthy", adapter.handleHealth)
 	http.HandleFunc("/-/ready", adapter.handleReady)
 
@@ -104,19 +242,47 @@ func main() {
 }
 
 func (h *HoneycombAdapter) handleQuery(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	ctx := r.Context()
+	
+	// Start a new trace span
+	ctx, span := h.tracer.Start(ctx, "handleQuery")
+	defer span.End()
+	
 	query := r.URL.Query().Get("query")
 	timeParam := r.URL.Query().Get("time")
+	
+	// Add query information to span
+	span.SetAttributes(
+		attribute.String("query.promql", query),
+		attribute.String("query.time", timeParam),
+	)
 
 	log.Printf("🔍 Received PromQL query: %s", query)
 	h.logDebug("Received query: %s", query)
+	
+	// Increment query counter
+	h.queryCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("query_type", "promql"),
+	))
+
+	// Record query duration at the end
+	defer func() {
+		duration := time.Since(startTime).Seconds()
+		h.queryDuration.Record(ctx, duration, metric.WithAttributes(
+			attribute.String("query_type", "promql"),
+		))
+	}()
 
 	if query == "" {
+		span.SetAttributes(attribute.String("error", "missing query parameter"))
 		http.Error(w, "query parameter is required", http.StatusBadRequest)
 		return
 	}
 
 	// Handle vector queries directly (used by Flagger for validation)
 	if strings.Contains(query, "vector(") {
+		span.SetAttributes(attribute.String("query.type", "vector"))
 		h.handleVectorQuery(w, r, query, timeParam)
 		return
 	}
@@ -126,6 +292,10 @@ func (h *HoneycombAdapter) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("❌ Query translation error: %v", err)
 		h.logError("Query translation error: %v", err)
+		span.SetAttributes(
+			attribute.String("error", "translation_failed"),
+			attribute.String("error.message", err.Error()),
+		)
 		http.Error(w, fmt.Sprintf("Query translation error: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -135,10 +305,22 @@ func (h *HoneycombAdapter) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Execute Honeycomb query
 	serviceName := h.extractServiceName(query)
-	result, err := h.executeHoneycombQuery(honeycombQuery, serviceName)
+	span.SetAttributes(
+		attribute.String("query.service", serviceName),
+		attribute.Int("query.time_range", honeycombQuery.TimeRange),
+	)
+	
+	result, err := h.executeHoneycombQuery(ctx, honeycombQuery, serviceName)
 	if err != nil {
 		log.Printf("❌ Honeycomb query error: %v", err)
 		h.logError("Honeycomb query error: %v", err)
+		span.SetAttributes(
+			attribute.String("error", "honeycomb_query_failed"),
+			attribute.String("error.message", err.Error()),
+		)
+		h.honeycombErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("service", serviceName),
+		))
 		http.Error(w, fmt.Sprintf("Honeycomb query error: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -372,6 +554,11 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 		// Use adaptive windowing: fast for Flagger, safe for Honeycomb
 		if requestedWindow < minWindow {
 			log.Printf("📊 Requested window %v optimized to %v (configured minimum)", requestedWindow, minWindow)
+			// Track window enforcement
+			h.windowEnforcements.Add(context.Background(), 1, metric.WithAttributes(
+				attribute.String("requested_window", requestedWindow.String()),
+				attribute.String("enforced_window", minWindow.String()),
+			))
 			return minWindow
 		}
 		
@@ -381,11 +568,18 @@ func (h *HoneycombAdapter) extractTimeWindow(promQL string) time.Duration {
 	return minWindow
 }
 
-func (h *HoneycombAdapter) executeHoneycombQuery(query *HoneycombQuery, serviceName string) (map[string]interface{}, error) {
+func (h *HoneycombAdapter) executeHoneycombQuery(ctx context.Context, query *HoneycombQuery, serviceName string) (map[string]interface{}, error) {
+	ctx, span := h.tracer.Start(ctx, "executeHoneycombQuery")
+	defer span.End()
+	
+	span.SetAttributes(
+		attribute.String("honeycomb.service", serviceName),
+		attribute.Int("honeycomb.time_range", query.TimeRange),
+	)
 	// Use service name as dataset - no need to extract from filters
 	dataset := serviceName
 	if dataset == "" {
-		dataset = "unknown"
+		dataset = "cosmic-canary-service"
 	}
 	
 	// Step 1: Create the query and get the ID
